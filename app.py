@@ -52,12 +52,21 @@ if uploaded_file is not None:
             saved_path = file_handler.save_uploaded_file(uploaded_file)
             st.session_state["_saved_file_path"] = saved_path
             extracted_text = file_handler.extract_text_from_file(saved_path)
-            extracted_points = parse_coordinate_text(extracted_text)
+            extracted_points, crs_note = parse_coordinate_text(extracted_text)
             if extracted_points:
                 st.session_state["coords_text"] = "\n".join(
                     f"{lat}, {lon}" for lat, lon in extracted_points
                 )
-                st.success(f"Found {len(extracted_points)} coordinate point(s) in your file. Review below.")
+                msg = f"Found {len(extracted_points)} coordinate point(s) in your file."
+                if crs_note and crs_note != "undetected":
+                    msg += f" Converted from {crs_note} to WGS84."
+                st.success(f"{msg} Review below.")
+            elif crs_note == "undetected":
+                st.warning(
+                    "Found projected coordinates in this file but couldn't confidently match them "
+                    "to a known Nigerian coordinate system. Please double-check the source document, "
+                    "or enter WGS84 latitude/longitude manually below."
+                )
             else:
                 st.warning("Couldn't detect coordinates in this file automatically - please enter them below.")
 
@@ -75,9 +84,16 @@ coordinates_text = st.text_area(
 # ANALYZE
 # ------------------------------
 if st.button("Analyze My Land", type="primary"):
-    points = parse_coordinate_text(coordinates_text)
+    points, crs_note = parse_coordinate_text(coordinates_text)
     if not points:
-        st.error("Please upload a file or enter at least one coordinate.")
+        if crs_note == "undetected":
+            st.error(
+                "These look like projected (Easting/Northing) coordinates, but they couldn't be "
+                "confidently matched to a known Nigerian coordinate system. Please enter WGS84 "
+                "latitude/longitude instead."
+            )
+        else:
+            st.error("Please upload a file or enter at least one coordinate.")
     else:
         with st.spinner("Analyzing your land boundaries..."):
             neighbors_gdf = _load_neighbors()
@@ -88,6 +104,7 @@ if st.button("Analyze My Land", type="primary"):
             )
         st.session_state["result"] = result
         st.session_state["points"] = points
+        st.session_state["crs_note"] = crs_note
         st.session_state["user_gdf"] = user_gdf
         st.session_state["neighbors_gdf"] = neighbors_gdf
 
@@ -101,6 +118,10 @@ if "result" in st.session_state:
     neighbors_gdf = st.session_state["neighbors_gdf"]
 
     st.success("Analysis Complete!")
+
+    crs_note = st.session_state.get("crs_note")
+    if crs_note and crs_note != "undetected":
+        st.caption(f"📐 Coordinates converted from {crs_note} to WGS84 for analysis.")
 
     st.subheader("Risk Assessment")
     risk_level = result["risk_level"]
