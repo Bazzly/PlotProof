@@ -1,0 +1,60 @@
+{
+  "type": "FeatureCollection",
+  "crs": { "type": "name", "properties": { "name": "EPSG:4326" } },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "plot_ref": "LOS-0142",
+        "owner": "Adebayo Family Estate",
+        "registered": true
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [3.37890, 6.52400],
+          [3.38030, 6.52400],
+          [3.38030, 6.52540],
+          [3.37890, 6.52540],
+          [3.37890, 6.52400]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "plot_ref": "LOS-0198",
+        "owner": "Okafor Properties Ltd",
+        "registered": true
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [3.38080, 6.52600],
+          [3.38220, 6.52600],
+          [3.38220, 6.52740],
+          [3.38080, 6.52740],
+          [3.38080, 6.52600]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "plot_ref": "LOS-0231",
+        "owner": "Ibrahim & Sons",
+        "registered": true
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [3.49500, 6.59500],
+          [3.49640, 6.59500],
+          [3.49640, 6.59640],
+          [3.49500, 6.59640],
+          [3.49500, 6.59500]
+        ]]
+      }
+    }
+  ]
+}
