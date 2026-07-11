@@ -6,13 +6,14 @@ Built by Alli Bazeet (@bazzlycodes)
 import os
 import urllib.parse
 from datetime import date
+from typing import Optional
 
 import folium
 import streamlit as st
 from dotenv import load_dotenv
 from streamlit_folium import st_folium
 
-from utils import file_handler, gis_processing, legal, registry, report_generator, risk_calculator, training_data
+from utils import crs_utils, file_handler, gis_processing, legal, registry, report_generator, risk_calculator, training_data
 from utils import icons, theme
 from utils.coordinates import parse_coordinate_text
 
@@ -107,44 +108,79 @@ help_improve = st.checkbox(
     ),
 )
 
+def _extract_and_store(saved_path: str, file_type: str, forced_epsg: Optional[str] = None) -> None:
+    """(Re-)runs extraction from the uploaded file and stores the result,
+    used both on first upload and whenever the CRS override changes."""
+    extracted_text, extraction_method = file_handler.extract_text_from_file(saved_path)
+    # Vector-based boundary reconstruction needs a real local PDF file to
+    # open - not applicable to images or Supabase-hosted uploads.
+    pdf_path = saved_path if file_type == "pdf" and file_handler.storage_backend() == "local" else None
+    extracted_points, crs_note = parse_coordinate_text(extracted_text, pdf_path=pdf_path, forced_epsg=forced_epsg)
+    st.session_state["_upload_record"] = {
+        "source_file_ref": saved_path,
+        "pdf_path": pdf_path,
+        "file_type": file_type,
+        "extraction_method": extraction_method,
+        "raw_extracted_text": extracted_text,
+        "auto_detected_points": extracted_points,
+        "auto_detected_crs_note": crs_note,
+    }
+    if extracted_points:
+        st.session_state["coords_text"] = "\n".join(f"{lat}, {lon}" for lat, lon in extracted_points)
+        msg = f"Found {len(extracted_points)} coordinate point(s) in your file."
+        if crs_note and crs_note != "undetected":
+            msg += f" Converted from {crs_note} to WGS84."
+        st.success(f"{msg} Review below.")
+    elif crs_note == "undetected":
+        st.warning(
+            "Found projected coordinates in this file but couldn't confidently match them "
+            "to a known Nigerian coordinate system. Please double-check the source document, "
+            "or enter WGS84 latitude/longitude manually below."
+        )
+    else:
+        st.warning("Couldn't detect coordinates in this file automatically - please enter them below.")
+
+
+crs_options = {"Auto-detect": None}
+crs_options.update({name: epsg for epsg, name in crs_utils.NIGERIA_CRS_CANDIDATES.items()})
+
 if uploaded_file is not None:
     file_key = (uploaded_file.name, uploaded_file.size)
     if st.session_state.get("_last_uploaded_key") != file_key:
         st.session_state["_last_uploaded_key"] = file_key
+        st.session_state["_crs_override"] = "Auto-detect"
+        st.session_state["_last_applied_override"] = "Auto-detect"
         with st.spinner("Reading coordinates from your file..."):
             saved_path = file_handler.save_uploaded_file(uploaded_file)
             file_type = os.path.splitext(uploaded_file.name)[1].lstrip(".").lower()
-            extracted_text, extraction_method = file_handler.extract_text_from_file(saved_path)
-            # Vector-based boundary reconstruction needs a real local PDF
-            # file to open - not applicable to images or Supabase-hosted uploads.
-            pdf_path = saved_path if file_type == "pdf" and file_handler.storage_backend() == "local" else None
-            extracted_points, crs_note = parse_coordinate_text(extracted_text, pdf_path=pdf_path)
-            st.session_state["_upload_record"] = {
-                "source_file_ref": saved_path,
-                "file_type": file_type,
-                "extraction_method": extraction_method,
-                "raw_extracted_text": extracted_text,
-                "auto_detected_points": extracted_points,
-                "auto_detected_crs_note": crs_note,
-            }
-            if extracted_points:
-                st.session_state["coords_text"] = "\n".join(
-                    f"{lat}, {lon}" for lat, lon in extracted_points
-                )
-                msg = f"Found {len(extracted_points)} coordinate point(s) in your file."
-                if crs_note and crs_note != "undetected":
-                    msg += f" Converted from {crs_note} to WGS84."
-                st.success(f"{msg} Review below.")
-            elif crs_note == "undetected":
-                st.warning(
-                    "Found projected coordinates in this file but couldn't confidently match them "
-                    "to a known Nigerian coordinate system. Please double-check the source document, "
-                    "or enter WGS84 latitude/longitude manually below."
-                )
-            else:
-                st.warning("Couldn't detect coordinates in this file automatically - please enter them below.")
+            _extract_and_store(saved_path, file_type)
 
 step_header(2, "Confirm or Enter Coordinates")
+
+# Rendered before the coordinates box below so that, if this changes,
+# _extract_and_store() can update coords_text before that widget is
+# instantiated (Streamlit forbids writing to a widget's session_state key
+# after it's already rendered in the current run) - no st.rerun() needed,
+# the script just continues on and renders the text_area with the fresh
+# value, the same way the initial upload flow already works.
+selected_crs_label = st.selectbox(
+    "Coordinate system (only needed if auto-detection looks wrong)",
+    options=list(crs_options.keys()),
+    key="_crs_override",
+    help=(
+        "PlotProof tries to detect this automatically from the document, but a plan that only "
+        "states a UTM zone (not the datum) can't always be resolved with certainty. If the "
+        "detected system looks wrong, select the correct one here - if you uploaded a file, "
+        "coordinates are re-extracted from it using your selection. Doesn't apply if your "
+        "coordinates are already plain latitude/longitude - those need no CRS at all."
+    ),
+)
+forced_epsg = crs_options[selected_crs_label]
+upload_record = st.session_state.get("_upload_record")
+if upload_record and st.session_state.get("_last_applied_override") != selected_crs_label:
+    st.session_state["_last_applied_override"] = selected_crs_label
+    _extract_and_store(upload_record["source_file_ref"], upload_record["file_type"], forced_epsg=forced_epsg)
+
 st.caption("One point per line: latitude, longitude. Add all boundary corners (3+) for an accurate plot outline.")
 coordinates_text = st.text_area(
     "Coordinates",
@@ -158,7 +194,7 @@ coordinates_text = st.text_area(
 # ANALYZE
 # ------------------------------
 if st.button("Analyze My Land", type="primary"):
-    points, crs_note = parse_coordinate_text(coordinates_text)
+    points, crs_note = parse_coordinate_text(coordinates_text, forced_epsg=forced_epsg)
     # The box shows clean WGS84 decimals after upload (for readability), which
     # no longer looks projected on re-parse - so re-detection legitimately finds
     # nothing here. Reuse the upload-time CRS note when the points are still

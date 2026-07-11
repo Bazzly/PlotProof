@@ -98,7 +98,7 @@ def _parse_pairs(text: str) -> Tuple[List[Tuple[float, float]], List[Tuple[float
 
 
 def parse_coordinate_text(
-    text: str, pdf_path: Optional[str] = None
+    text: str, pdf_path: Optional[str] = None, forced_epsg: Optional[str] = None
 ) -> Tuple[List[Tuple[float, float]], Optional[str]]:
     """
     Extract (lat, lon) pairs from free-form text, one or more per line.
@@ -110,6 +110,12 @@ def parse_coordinate_text(
     boundary reconstruction (see plan_vectors.py) for plans that label
     multiple beacons individually, in addition to the pure text-based
     bearing/distance traverse (see traverse.py) tried either way.
+
+    forced_epsg: a user-selected CRS override (see the UI's manual picker) -
+    takes priority over both declared and auto-detected CRS, since "zone
+    declared but datum unstated" can't always be resolved from the text
+    alone and someone who knows their plan's real CRS should be able to
+    just say so.
 
     Returns (points, crs_note):
       - crs_note is None if input was already WGS84 degrees.
@@ -128,7 +134,7 @@ def parse_coordinate_text(
     if not projected_en:
         return [p for p in geographic if is_valid_latlon(*p)], None
 
-    declared = crs_utils.detect_declared_crs(text)
+    declared = None if forced_epsg else crs_utils.detect_declared_crs(text)
 
     # A single origin point plus a description of the rest of the boundary
     # is how these plans describe a plot's actual shape - reconstruct the
@@ -152,14 +158,14 @@ def parse_coordinate_text(
             method = f"a {len(polygon_en)}-leg traverse" if polygon_en else None
 
         if polygon_en and len(polygon_en) >= 3:
-            converted, crs_note = crs_utils.resolve_to_wgs84(polygon_en, declared=declared)
+            converted, crs_note = crs_utils.resolve_to_wgs84(polygon_en, declared=declared, forced_epsg=forced_epsg)
             valid_points = [p for p in converted if is_valid_latlon(*p)]
             if len(valid_points) >= 3:
                 note = f"boundary reconstructed from {method}"
                 crs_note = f"{crs_note}; {note}" if crs_note else note
                 return valid_points, crs_note
 
-    converted, crs_note = crs_utils.resolve_to_wgs84(projected_en, declared=declared)
+    converted, crs_note = crs_utils.resolve_to_wgs84(projected_en, declared=declared, forced_epsg=forced_epsg)
     points = geographic + converted
     valid_points = [(lat, lon) for lat, lon in points if is_valid_latlon(lat, lon)]
     return valid_points, crs_note
