@@ -36,6 +36,23 @@ def show_warning(message: str) -> None:
     results, not just outright failures."""
     st.warning(f"{message} Or [contact PlotProof for a consultation]({WHATSAPP_LINK}).")
 
+
+def crs_is_uncertain(crs_note: Optional[str]) -> bool:
+    """True when the CRS used was a guess (zone stated, datum wasn't) rather
+    than something declared, selected, or matched with certainty - see
+    crs_utils.resolve_to_wgs84()."""
+    return bool(crs_note) and "- assumed" in crs_note
+
+
+def show_crs_disclaimer() -> None:
+    show_warning(
+        "The coordinate system for this file couldn't be confirmed with certainty - only the "
+        "UTM zone was stated on the plan, not the datum, and guessing wrong can shift every "
+        "point by roughly 150m. Please confirm the correct coordinate system yourself using the "
+        "\"Coordinate system\" selector, or have it confirmed by Alli Bazeet before relying on "
+        "this result for any transaction or legal decision."
+    )
+
 st.set_page_config(page_title="PlotProof - Check Your Land Risk", page_icon="assets/logo.svg", layout="centered")
 st.markdown(theme.get_css(), unsafe_allow_html=True)
 
@@ -157,6 +174,8 @@ def _extract_and_store(saved_path: str, file_type: str, forced_epsg: Optional[st
         if crs_note and crs_note != "undetected":
             msg += f" Converted from {crs_note} to WGS84."
         st.success(f"{msg} Review below.")
+        if crs_is_uncertain(crs_note):
+            show_crs_disclaimer()
     elif crs_note == "undetected":
         show_warning(
             "Found projected coordinates in this file but couldn't confidently match them "
@@ -280,6 +299,8 @@ if "result" in st.session_state:
             {crs_note} to WGS84 for analysis.</div>""",
             unsafe_allow_html=True,
         )
+        if crs_is_uncertain(crs_note):
+            show_crs_disclaimer()
 
     step_header(3, "Risk Assessment")
     risk_level = result["risk_level"]
