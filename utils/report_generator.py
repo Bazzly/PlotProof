@@ -1,4 +1,4 @@
-"""PDF risk report generation for LandVerify, using ReportLab."""
+"""PDF risk report generation for PlotProof, using ReportLab."""
 
 import io
 from datetime import datetime
@@ -52,7 +52,7 @@ def generate_pdf_report(
         nonlocal y
         y -= amount
 
-    line("LandVerify Risk Report", font="Helvetica-Bold", size=18, gap=0.32 * inch)
+    line("PlotProof Risk Report", font="Helvetica-Bold", size=18, gap=0.32 * inch)
     line(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", size=9)
     spacer()
 

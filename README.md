@@ -1,4 +1,4 @@
-# LandVerify
+# PlotProof
 
 Instant land boundary risk check for property owners in Africa. Upload a survey plan (or enter coordinates) and get a Low/Medium/High risk report, checked against known neighboring plots, with a downloadable PDF and a consultation CTA.
 
@@ -36,8 +36,8 @@ Recommended: **Streamlit Community Cloud** (free, no server to manage, matches t
 ```bash
 git init
 git add app.py utils requirements.txt packages.txt .env.example .gitignore data/sample_data
-git commit -m "LandVerify MVP"
-git remote add origin https://github.com/<your-username>/landverify.git
+git commit -m "PlotProof MVP"
+git remote add origin https://github.com/<your-username>/plotproof.git
 git branch -M main
 git push -u origin main
 ```
@@ -55,13 +55,13 @@ git push -u origin main
    ```toml
    SUPABASE_URL = ""
    SUPABASE_KEY = ""
-   WHATSAPP_LINK = "https://wa.me/2349051004636"
-   CALENDLY_LINK = "https://calendly.com/bazzlycodes"
+   WHATSAPP_LINK = "https://wa.me/2348064250232"
+   CALENDLY_LINK = "https://calendly.com/bazeet4love"
    ```
    Streamlit Cloud exposes these as environment variables at runtime - no code changes needed. Leave `SUPABASE_URL`/`SUPABASE_KEY` blank to keep using local disk storage.
 5. Click **Deploy**. First build takes a few minutes (installs GeoPandas/Shapely/tesseract).
 
-You'll get a live URL like `https://landverify.streamlit.app`.
+You'll get a live URL like `https://plotproof.streamlit.app`.
 
 ### 4. Storage note
 

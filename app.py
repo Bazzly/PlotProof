@@ -1,5 +1,5 @@
 """
-LandVerify - Instant Land Boundary Risk Check
+PlotProof - Instant Land Boundary Risk Check
 Built by Alli Bazeet (@bazzlycodes)
 """
 
@@ -15,12 +15,12 @@ from utils.coordinates import parse_coordinate_text
 
 load_dotenv()
 
-WHATSAPP_LINK = os.environ.get("WHATSAPP_LINK", "https://wa.me/2349051004636")
-CALENDLY_LINK = os.environ.get("CALENDLY_LINK", "https://calendly.com/bazzlycodes")
+WHATSAPP_LINK = os.environ.get("WHATSAPP_LINK", "https://wa.me/2348064250232")
+CALENDLY_LINK = os.environ.get("CALENDLY_LINK", "https://calendly.com/bazeet4love")
 
-st.set_page_config(page_title="LandVerify - Check Your Land Risk", page_icon="🗺️", layout="centered")
+st.set_page_config(page_title="PlotProof - Check Your Land Risk", page_icon="🗺️", layout="centered")
 
-st.title("🗺️ LandVerify")
+st.title("🗺️ PlotProof")
 st.subheader("Instant Land Boundary Risk Check")
 st.markdown(
     "Upload your survey plan or enter coordinates to get an instant boundary risk "
@@ -149,7 +149,7 @@ if "result" in st.session_state:
     st.download_button(
         label="⬇️ Download PDF Report",
         data=pdf_buffer,
-        file_name="LandVerify_Report.pdf",
+        file_name="PlotProof_Report.pdf",
         mime="application/pdf",
     )
 

@@ -1,5 +1,5 @@
 """
-File upload storage and text/coordinate extraction for LandVerify.
+File upload storage and text/coordinate extraction for PlotProof.
 
 Storage: uses local disk under data/uploads/ by default. If SUPABASE_URL
 and SUPABASE_KEY are set in the environment, uploads are pushed to

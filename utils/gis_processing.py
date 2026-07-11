@@ -1,5 +1,5 @@
 """
-GIS Processing Module for LandVerify.
+GIS Processing Module for PlotProof.
 
 Builds a geometry for the user's plot from the coordinates they provided
 (a closed boundary if 3+ points were given, otherwise a buffered point/line
