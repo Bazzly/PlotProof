@@ -1,0 +1,3 @@
+[browser]
+# No non-essential telemetry - see legal/privacy.md, Section 6 (Cookies).
+gatherUsageStats = false

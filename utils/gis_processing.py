@@ -15,7 +15,10 @@ from pathlib import Path
 from typing import Dict, Any, List, Tuple
 
 import geopandas as gpd
+import pandas as pd
 from shapely.geometry import Point, LineString, Polygon
+
+from utils import registry
 
 SAMPLE_DATA_PATH = (
     Path(__file__).resolve().parent.parent / "data" / "sample_data" / "neighboring_plots.geojson"
@@ -23,10 +26,35 @@ SAMPLE_DATA_PATH = (
 
 DEFAULT_POINT_BUFFER_M = 100  # assumed plot radius when only 1-2 points are given
 DEFAULT_PROXIMITY_BUFFER_M = 150  # "too close for comfort" distance to a neighboring plot
+DEFAULT_CONTEXT_RADIUS_M = 800  # how far out the map shows surrounding registered plots
 
 
 def load_neighboring_plots(path: Path = SAMPLE_DATA_PATH) -> gpd.GeoDataFrame:
-    return gpd.read_file(path)
+    """Synthetic sample plots plus whatever real plots users have opted to
+    add to the shared registry (utils/registry.py) - not cached, so a
+    newly-contributed plot is visible to the very next analysis."""
+    sample = gpd.read_file(path)
+    contributed = registry.load_registry_gdf()
+    if contributed.empty:
+        return sample
+    return gpd.GeoDataFrame(pd.concat([sample, contributed], ignore_index=True), crs="EPSG:4326")
+
+
+def nearby_plots_for_context(
+    user_gdf: gpd.GeoDataFrame,
+    neighbors_gdf: gpd.GeoDataFrame,
+    radius_m: float = DEFAULT_CONTEXT_RADIUS_M,
+) -> gpd.GeoDataFrame:
+    """Neighbors within radius_m of the user's plot, for map display - as
+    the registry grows this keeps the map showing immediate surroundings
+    instead of every registered plot nationwide."""
+    if neighbors_gdf.empty:
+        return neighbors_gdf
+    utm_crs = user_gdf.estimate_utm_crs()
+    user_geom_m = user_gdf.to_crs(utm_crs).geometry.iloc[0]
+    neighbors_m = neighbors_gdf.to_crs(utm_crs)
+    within = neighbors_m.geometry.distance(user_geom_m) <= radius_m
+    return neighbors_gdf[within.values]
 
 
 def build_user_plot_gdf(

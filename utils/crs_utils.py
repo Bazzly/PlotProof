@@ -15,6 +15,7 @@ Guessing order *and* CRS simultaneously is how you get a confident, silent,
 wrong answer (both orders can land "in Nigeria" by coincidence).
 """
 
+import re
 from typing import Dict, List, Optional, Tuple
 
 from pyproj import Transformer
@@ -37,6 +38,32 @@ NIGERIA_BOUNDS = {"min_lat": 4.0, "max_lat": 14.0, "min_lon": 2.5, "max_lon": 14
 # Easting/Northing in these systems run from the tens of thousands to
 # low millions of meters. Anything past this threshold is projected.
 PROJECTED_VALUE_THRESHOLD = 1000
+
+
+# Nigerian survey plans commonly state their own CRS right on the drawing
+# (e.g. "ORIGIN:- U.T.M (ZONE 31)" or "MINNA WEST BELT"). Trusting that
+# beats trial-and-error every time it's present.
+_UTM_ZONE_RE = re.compile(r"U\.?\s*T\.?\s*M\.?\s*\(?\s*ZONE\s*(\d{1,2})\)?", re.IGNORECASE)
+_BELT_RE = re.compile(r"(WEST|MID(?:DLE)?|EAST)\s*BELT", re.IGNORECASE)
+_ZONE_TO_EPSG = {31: "EPSG:32631", 32: "EPSG:32632", 33: "EPSG:32633"}
+_BELT_TO_EPSG = {"WEST": "EPSG:26391", "MID": "EPSG:26392", "MIDDLE": "EPSG:26392", "EAST": "EPSG:26393"}
+
+
+def detect_declared_crs(text: str) -> Optional[Tuple[str, str]]:
+    """Looks for an explicit CRS declaration on the document itself."""
+    zone_match = _UTM_ZONE_RE.search(text)
+    if zone_match:
+        epsg = _ZONE_TO_EPSG.get(int(zone_match.group(1)))
+        if epsg:
+            return epsg, NIGERIA_CRS_CANDIDATES[epsg]
+
+    belt_match = _BELT_RE.search(text)
+    if belt_match:
+        epsg = _BELT_TO_EPSG.get(belt_match.group(1).upper())
+        if epsg:
+            return epsg, NIGERIA_CRS_CANDIDATES[epsg]
+
+    return None
 
 
 def looks_projected(pair: Tuple[float, float]) -> bool:
@@ -81,16 +108,27 @@ def convert_pairs(pairs_en: List[Tuple[float, float]], epsg: str) -> List[Tuple[
     return [tuple(reversed(transformer.transform(x, y))) for x, y in pairs_en]
 
 
-def resolve_to_wgs84(pairs_en: List[Tuple[float, float]]) -> Tuple[List[Tuple[float, float]], Optional[str]]:
+def resolve_to_wgs84(
+    pairs_en: List[Tuple[float, float]],
+    declared: Optional[Tuple[str, str]] = None,
+) -> Tuple[List[Tuple[float, float]], Optional[str]]:
     """
     pairs_en: (easting, northing) pairs already in the correct axis order.
+    declared: (epsg, name) if the source document stated its own CRS - used
+      directly instead of trial-and-error detection.
     Returns (points in WGS84 lat/lon, a note describing what happened):
       - note is "EPSG:xxxx (Name)" if a CRS was matched and points converted.
+      - note is "EPSG:xxxx (Name) - declared on document" if it came from
+        an explicit statement on the plan rather than a guess.
       - note is "undetected" if these projected-looking points couldn't be
         matched to a known Nigerian CRS (dropped rather than guessed at).
     """
     if not pairs_en:
         return [], None
+
+    if declared:
+        epsg, name = declared
+        return convert_pairs(pairs_en, epsg), f"{epsg} ({name}) - declared on document"
 
     match = detect_crs(pairs_en)
     if match is None:

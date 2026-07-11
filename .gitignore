@@ -3,4 +3,6 @@ __pycache__/
 *.pyc
 .env
 data/uploads/
-.streamlit/
+data/training_examples/
+data/registry/
+.streamlit/secrets.toml

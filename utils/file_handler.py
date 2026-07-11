@@ -16,7 +16,7 @@ import io
 import os
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import fitz  # PyMuPDF
 import pytesseract
@@ -54,15 +54,17 @@ def save_uploaded_file(uploaded_file) -> str:
     return str(dest)
 
 
-def extract_text_from_pdf(file_path: str) -> str:
-    """Extract selectable text from a PDF; falls back to OCR per-page if empty."""
+def extract_text_from_pdf(file_path: str) -> Tuple[str, str]:
+    """Extract selectable text from a PDF; falls back to OCR per-page if empty.
+    Returns (text, method) where method is "pdf_text" or "ocr" - useful to
+    know later, since OCR output is noisier than a real text layer."""
     doc = fitz.open(file_path)
     text_parts = [page.get_text() for page in doc]
     text = "\n".join(text_parts).strip()
 
     if text:
         doc.close()
-        return text
+        return text, "pdf_text"
 
     # No text layer (scanned survey plan) - rasterize each page and OCR it.
     ocr_parts = []
@@ -71,18 +73,19 @@ def extract_text_from_pdf(file_path: str) -> str:
         image = Image.open(io.BytesIO(pix.tobytes("png")))
         ocr_parts.append(pytesseract.image_to_string(image))
     doc.close()
-    return "\n".join(ocr_parts).strip()
+    return "\n".join(ocr_parts).strip(), "ocr"
 
 
-def extract_text_from_image(file_path: str) -> str:
+def extract_text_from_image(file_path: str) -> Tuple[str, str]:
     image = Image.open(file_path)
-    return pytesseract.image_to_string(image).strip()
+    return pytesseract.image_to_string(image).strip(), "ocr"
 
 
-def extract_text_from_file(file_path: str) -> str:
+def extract_text_from_file(file_path: str) -> Tuple[str, str]:
+    """Returns (text, method); method is "" when the extension isn't supported."""
     ext = Path(file_path).suffix.lower()
     if ext == ".pdf":
         return extract_text_from_pdf(file_path)
     if ext in (".png", ".jpg", ".jpeg"):
         return extract_text_from_image(file_path)
-    return ""
+    return "", ""

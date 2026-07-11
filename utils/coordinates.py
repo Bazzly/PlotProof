@@ -7,7 +7,7 @@ logic only lives in one place.
 import re
 from typing import List, Optional, Tuple
 
-from utils import crs_utils
+from utils import crs_utils, plan_vectors, traverse
 
 _NUM_CORE = (
     r"-?\d{1,3}(?:,\d{3})*\.\d+"  # decimal degrees or comma-grouped decimals
@@ -28,6 +28,13 @@ _NUM_RE = re.compile(r"-?\d{1,3}(?:,\d{3})*\.\d+|-?\d{1,3}(?:,\d{3})+|-?\d{5,7}(
 # collide with hemisphere-suffix degree notation ("6.5244N").
 _NORTHING_LABEL_RE = re.compile(r"\b(?:Northing|N)\s*[:=]?\s*(" + _NUM_CORE + r")", re.IGNORECASE)
 _EASTING_LABEL_RE = re.compile(r"\b(?:Easting|E)\s*[:=]?\s*(" + _NUM_CORE + r")", re.IGNORECASE)
+
+# The other common Nigerian convention prints the grid origin as
+# "750615.672mN" / "515263.182mE" - number first, then a meters+direction
+# suffix, usually on their own line. "m" lowercase, N/E uppercase, as
+# printed by the surveying software that generates these plans.
+_SUFFIX_NORTHING_RE = re.compile(r"(" + _NUM_CORE + r")\s*mN\b")
+_SUFFIX_EASTING_RE = re.compile(r"(" + _NUM_CORE + r")\s*mE\b")
 
 # Loose bounding box covering West/Central Africa, used only to flag
 # coordinates that are clearly off (wrong hemisphere, swapped lat/lon).
@@ -57,6 +64,8 @@ def _parse_pairs(text: str) -> Tuple[List[Tuple[float, float]], List[Tuple[float
     """
     known_en: List[Tuple[float, float]] = []
     ambiguous: List[Tuple[float, float]] = []
+    suffix_northings: List[float] = []
+    suffix_eastings: List[float] = []
 
     for line in text.splitlines():
         n_match = _NORTHING_LABEL_RE.search(line)
@@ -67,19 +76,40 @@ def _parse_pairs(text: str) -> Tuple[List[Tuple[float, float]], List[Tuple[float
             known_en.append((easting, northing))
             continue
 
+        suf_n = _SUFFIX_NORTHING_RE.search(line)
+        if suf_n:
+            suffix_northings.append(float(suf_n.group(1).replace(",", "")))
+            continue
+        suf_e = _SUFFIX_EASTING_RE.search(line)
+        if suf_e:
+            suffix_eastings.append(float(suf_e.group(1).replace(",", "")))
+            continue
+
         nums = [float(n.replace(",", "")) for n in _NUM_RE.findall(line)]
         for i in range(0, len(nums) - 1, 2):
             ambiguous.append((nums[i], nums[i + 1]))
 
+    # Suffix-labeled values appear on separate lines (northing line, then
+    # easting line) but always in matching pairs, in order.
+    for northing, easting in zip(suffix_northings, suffix_eastings):
+        known_en.append((easting, northing))
+
     return known_en, ambiguous
 
 
-def parse_coordinate_text(text: str) -> Tuple[List[Tuple[float, float]], Optional[str]]:
+def parse_coordinate_text(
+    text: str, pdf_path: Optional[str] = None
+) -> Tuple[List[Tuple[float, float]], Optional[str]]:
     """
     Extract (lat, lon) pairs from free-form text, one or more per line.
     Handles both WGS84 decimal-degree pairs ("6.5244, 3.3792") and
     projected Easting/Northing pairs from Nigerian survey plans - the
     latter are auto-matched to a CRS and converted to WGS84.
+
+    pdf_path: the source PDF, if any - enables vector-graphics-based
+    boundary reconstruction (see plan_vectors.py) for plans that label
+    multiple beacons individually, in addition to the pure text-based
+    bearing/distance traverse (see traverse.py) tried either way.
 
     Returns (points, crs_note):
       - crs_note is None if input was already WGS84 degrees.
@@ -95,11 +125,41 @@ def parse_coordinate_text(text: str) -> Tuple[List[Tuple[float, float]], Optiona
     unlabeled_en = [(easting, northing) for northing, easting in unlabeled_projected]
 
     projected_en = known_en + unlabeled_en
-    crs_note: Optional[str] = None
-    converted: List[Tuple[float, float]] = []
-    if projected_en:
-        converted, crs_note = crs_utils.resolve_to_wgs84(projected_en)
+    if not projected_en:
+        return [p for p in geographic if is_valid_latlon(*p)], None
 
+    declared = crs_utils.detect_declared_crs(text)
+
+    # A single origin point plus a description of the rest of the boundary
+    # is how these plans describe a plot's actual shape - reconstruct the
+    # full polygon instead of falling back to a generic buffered-point
+    # estimate. Try the higher-confidence vector-graphics method first
+    # (plans that label each beacon individually), then the text-based
+    # bearing/distance traverse (plans that only label the origin).
+    if len(projected_en) == 1 and not geographic:
+        origin_en = projected_en[0]
+        polygon_en = None
+        method = None
+
+        if pdf_path:
+            scale_ratio = traverse.parse_scale_ratio(text)
+            if scale_ratio:
+                polygon_en = plan_vectors.build_polygon_from_pdf(pdf_path, origin_en, scale_ratio, text)
+                method = "beacon markers in the drawing"
+
+        if not polygon_en:
+            polygon_en = traverse.build_polygon_from_text(text, origin_en)
+            method = f"a {len(polygon_en)}-leg traverse" if polygon_en else None
+
+        if polygon_en and len(polygon_en) >= 3:
+            converted, crs_note = crs_utils.resolve_to_wgs84(polygon_en, declared=declared)
+            valid_points = [p for p in converted if is_valid_latlon(*p)]
+            if len(valid_points) >= 3:
+                note = f"boundary reconstructed from {method}"
+                crs_note = f"{crs_note}; {note}" if crs_note else note
+                return valid_points, crs_note
+
+    converted, crs_note = crs_utils.resolve_to_wgs84(projected_en, declared=declared)
     points = geographic + converted
     valid_points = [(lat, lon) for lat, lon in points if is_valid_latlon(lat, lon)]
     return valid_points, crs_note
