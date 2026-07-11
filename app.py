@@ -24,6 +24,18 @@ WHATSAPP_LINK = os.environ.get("WHATSAPP_LINK", "https://chat.whatsapp.com/KrMfF
 CALENDLY_LINK = os.environ.get("CALENDLY_LINK", "https://calendly.com/bazeet4love")
 APP_URL = os.environ.get("APP_URL", "https://plotproof.streamlit.app")
 
+
+def show_error(message: str) -> None:
+    """st.error, with a standing offer to talk to a human when the app can't
+    resolve something on its own."""
+    st.error(f"{message} Or [contact PlotProof for a consultation]({WHATSAPP_LINK}).")
+
+
+def show_warning(message: str) -> None:
+    """st.warning, with the same contact offer - for partial/uncertain
+    results, not just outright failures."""
+    st.warning(f"{message} Or [contact PlotProof for a consultation]({WHATSAPP_LINK}).")
+
 st.set_page_config(page_title="PlotProof - Check Your Land Risk", page_icon="assets/logo.svg", layout="centered")
 st.markdown(theme.get_css(), unsafe_allow_html=True)
 
@@ -124,7 +136,7 @@ def _extract_and_store(saved_path: str, file_type: str, forced_epsg: Optional[st
     except Exception:
         traceback.print_exc()
         st.session_state["_upload_record"] = None
-        st.error(
+        show_error(
             "Something went wrong reading this file automatically. The technical details were "
             "logged for review - in the meantime, please enter coordinates manually below."
         )
@@ -146,13 +158,13 @@ def _extract_and_store(saved_path: str, file_type: str, forced_epsg: Optional[st
             msg += f" Converted from {crs_note} to WGS84."
         st.success(f"{msg} Review below.")
     elif crs_note == "undetected":
-        st.warning(
+        show_warning(
             "Found projected coordinates in this file but couldn't confidently match them "
             "to a known Nigerian coordinate system. Please double-check the source document, "
             "or enter WGS84 latitude/longitude manually below."
         )
     else:
-        st.warning("Couldn't detect coordinates in this file automatically - please enter them below.")
+        show_warning("Couldn't detect coordinates in this file automatically - please enter them below.")
 
 
 crs_options = {"Auto-detect": None}
@@ -218,13 +230,13 @@ if st.button("Analyze My Land", type="primary"):
         crs_note = upload_record_for_note["auto_detected_crs_note"]
     if not points:
         if crs_note == "undetected":
-            st.error(
+            show_error(
                 "These look like projected (Easting/Northing) coordinates, but they couldn't be "
                 "confidently matched to a known Nigerian coordinate system. Please enter WGS84 "
                 "latitude/longitude instead."
             )
         else:
-            st.error("Please upload a file or enter at least one coordinate.")
+            show_error("Please upload a file or enter at least one coordinate.")
     else:
         with st.spinner("Analyzing your land boundaries..."):
             neighbors_gdf = _load_neighbors()
