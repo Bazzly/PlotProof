@@ -4,6 +4,7 @@ Built by Alli Bazeet (@bazzlycodes)
 """
 
 import os
+import traceback
 import urllib.parse
 from datetime import date
 from typing import Optional
@@ -110,12 +111,25 @@ help_improve = st.checkbox(
 
 def _extract_and_store(saved_path: str, file_type: str, forced_epsg: Optional[str] = None) -> None:
     """(Re-)runs extraction from the uploaded file and stores the result,
-    used both on first upload and whenever the CRS override changes."""
-    extracted_text, extraction_method = file_handler.extract_text_from_file(saved_path)
-    # Vector-based boundary reconstruction needs a real local PDF file to
-    # open - not applicable to images or Supabase-hosted uploads.
-    pdf_path = saved_path if file_type == "pdf" and file_handler.storage_backend() == "local" else None
-    extracted_points, crs_note = parse_coordinate_text(extracted_text, pdf_path=pdf_path, forced_epsg=forced_epsg)
+    used both on first upload and whenever the CRS override changes.
+    Extraction touches unpredictable third-party file content (PDF
+    internals, OCR), so failures here must degrade to manual entry rather
+    than crash the app - the full exception is logged server-side either way."""
+    try:
+        extracted_text, extraction_method = file_handler.extract_text_from_file(saved_path)
+        # Vector-based boundary reconstruction needs a real local PDF file to
+        # open - not applicable to images or Supabase-hosted uploads.
+        pdf_path = saved_path if file_type == "pdf" and file_handler.storage_backend() == "local" else None
+        extracted_points, crs_note = parse_coordinate_text(extracted_text, pdf_path=pdf_path, forced_epsg=forced_epsg)
+    except Exception:
+        traceback.print_exc()
+        st.session_state["_upload_record"] = None
+        st.error(
+            "Something went wrong reading this file automatically. The technical details were "
+            "logged for review - in the meantime, please enter coordinates manually below."
+        )
+        return
+
     st.session_state["_upload_record"] = {
         "source_file_ref": saved_path,
         "pdf_path": pdf_path,
