@@ -23,6 +23,7 @@ load_dotenv()
 WHATSAPP_LINK = os.environ.get("WHATSAPP_LINK", "https://chat.whatsapp.com/KrMfFgenA5u50QTASfyyro?s=cl&p=a&ilr=1")
 CALENDLY_LINK = os.environ.get("CALENDLY_LINK", "https://calendly.com/bazeet4love")
 APP_URL = os.environ.get("APP_URL", "https://plotproof.streamlit.app")
+TWITTER_LINK = os.environ.get("TWITTER_LINK", "https://x.com/bazzlycodes")
 
 
 def show_error(message: str) -> None:
@@ -45,12 +46,13 @@ def crs_is_uncertain(crs_note: Optional[str]) -> bool:
 
 
 def show_crs_disclaimer() -> None:
-    show_warning(
+    st.warning(
         "The coordinate system for this file couldn't be confirmed with certainty - only the "
         "UTM zone was stated on the plan, not the datum, and guessing wrong can shift every "
         "point by roughly 150m. Please confirm the correct coordinate system yourself using the "
-        "\"Coordinate system\" selector, or have it confirmed by Alli Bazeet before relying on "
-        "this result for any transaction or legal decision."
+        f"\"Coordinate system\" selector, or have it confirmed by us at "
+        f"[@PlotProof]({TWITTER_LINK}) before relying on this result for any transaction or "
+        "legal decision."
     )
 
 st.set_page_config(page_title="PlotProof - Check Your Land Risk", page_icon="assets/logo.svg", layout="centered")
