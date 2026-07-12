@@ -83,11 +83,21 @@ Survey plans come from many different surveyors' software with no shared format 
 
 A plan that states "U.T.M (ZONE 31)" without naming a datum is genuinely ambiguous - it could mean WGS84 UTM or the older Minna-datum UTM, and guessing wrong is a real error (confirmed against a real plan: ~150m off, easily enough to flip an overlap result). `detect_declared_crs()` only claims certainty when the text names a datum explicitly (`"WGS84"` or `"MINNA"`); otherwise it picks a default but labels the result "assumed" rather than "declared," and the app's **"Coordinate system"** selector (step 2) lets a user who knows their plan's real CRS override the guess directly - re-extracting from the source file with that CRS forced, no re-upload needed.
 
+### Image OCR quality (phone photos)
+
+Most users photograph their survey plan with a phone rather than upload a clean PDF, and plain OCR on a raw photo is meaningfully worse than on a computer-rendered PDF page - confirmed directly: an unprocessed phone-photo-quality image read `750615.672` back as `750615672`, silently losing the decimal point (and with it, the whole coordinate, since the number regex requires one). `file_handler._preprocess_for_ocr()` fixes this before OCR runs: bakes in EXIF rotation, auto-corrects sideways/upside-down photos via Tesseract's own orientation detection (`_correct_orientation()`, gracefully skipped if OSD can't find enough text to judge - common on sparse drawings), upscales undersized images, and applies grayscale/sharpen/contrast. `--psm 6` (uniform text block) consistently kept multi-digit coordinates on one line better than the default or sparse-text modes, which tended to split long numbers across lines.
+
+This materially improves but doesn't guarantee OCR accuracy on a genuinely degraded photo - that's why `utils/coordinates.py`'s number regex requires digit runs to be bounded by non-digit characters on both sides (`(?<!\d)...(?!\d)`), so a garbled run like `750630892` (missing its decimal point) is dropped entirely rather than greedily prefix-matched into a wrong-but-plausible-looking number (confirmed directly: this exact failure mode produced a coordinate 60+ degrees of latitude off before the fix). Losing an unparseable point is recoverable - the user sees "found N of however-many-expected points" and can add it manually; silently returning a wrong one isn't.
+
 When a user checks **"Help improve coordinate extraction"** before analyzing an uploaded file, `utils/training_data.py` saves the document's extracted text, what was auto-detected, and what the user actually confirmed/corrected - opt-in only, never collected silently. This is meant as labeled data (input → ground truth) for eventually training or fine-tuning a real extraction model instead of hand-patching regexes for every new format. Records land in `data/training_examples/*.json` locally, or in a `training_examples` table in Supabase once `SUPABASE_URL`/`SUPABASE_KEY` are set (see the schema documented at the top of `utils/training_data.py` - create that table yourself before switching over). Both locations can contain personal property/owner details from uploaded plans, so they're gitignored and shouldn't be shared outside your own review.
 
 ## Polygon reconstruction
 
 Most survey plans only print one absolute coordinate plus a description of the rest of the boundary (bearings/distances, or individually-labeled beacons) rather than a table of corner coordinates. `utils/traverse.py` walks a text-based bearing/distance traverse from that origin; `utils/plan_vectors.py` reconstructs the boundary directly from the PDF's vector drawing when the plan labels each beacon individually (higher confidence, tried first). Both are cross-checked against the plan's own printed `AREA:-` figure before being trusted - a reconstruction that doesn't match within 15% is discarded in favor of the simpler single-point estimate, rather than showing a confidently wrong shape.
+
+## PDF report design
+
+`utils/report_generator.py` builds the downloadable report with ReportLab's canvas API, styled to match the web app rather than as plain black-and-white text: a colored header band, a risk badge with the same status icon shapes used on the page, a Low/Medium/High gauge with a pointer, a schematic diagram of the plot boundary (the actual polygon, scaled to fit - or a dashed circle for the buffered-estimate case when fewer than 3 points were given), a conflicting/nearby-plots table, a proper coordinates table, and a footer with real clickable links (WhatsApp/Calendly, via `canvas.linkURL()`). Colors are imported from `utils/theme.py` (`theme.STATUS`, `theme.ACCENT_LIGHT`, `theme.INK`) rather than redefined, so the report never drifts from the app's palette.
 
 ## Shared land registry
 
@@ -96,6 +106,12 @@ Most survey plans only print one absolute coordinate plus a description of the r
 Because a "no risk" result only reflects what's on record at that moment, the results view says so explicitly and includes a share CTA - the registry's value compounds with more contributors, so the messaging leans into inviting neighbors rather than treating a clean result as a final answer.
 
 Records land in `data/registry/registry_plots.json` locally, or a `registry_plots` table in Supabase once configured (schema in `utils/registry.py`) - gitignored either way, since it's user-contributed data that shouldn't live in source control.
+
+## Two-plot comparison mode
+
+Alongside the standard "check against known plots" flow, a mode selector (top of `app.py`) offers **"Compare two specific plots"** - checks a user's plot directly against one specific neighboring plot they provide, instead of against the registry/sample data. This means processing a second person's survey document, not just the uploader's own, so it's gated behind its own explicit consent checkbox ("I confirm my neighbor has agreed...") - the neighboring-plot inputs stay `disabled=True` until that's checked, and the Compare button stays disabled too. PlotProof doesn't and can't verify this consent independently; the uploader is attesting to having it.
+
+Both flows share the same upload/CRS-override machinery (`render_document_input()`, namespaced by a `slot` argument so Plot A/B's session state and widget keys never collide) and the same results rendering (`render_results()`), just pointed at a single ad-hoc neighbor GeoDataFrame instead of `load_neighboring_plots()`. Comparison results skip the shared-registry opt-in and viral-sharing CTA - those are framed around a plot's relationship to the wider registry, which doesn't apply to a one-off direct comparison.
 
 ## Terms of Service & Privacy Policy
 

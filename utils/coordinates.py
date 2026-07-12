@@ -9,10 +9,17 @@ from typing import List, Optional, Tuple
 
 from utils import crs_utils, plan_vectors, traverse
 
+# Lookaround guards on every alternative below prevent matching a partial
+# prefix/suffix of a longer, malformed digit run (e.g. OCR mangling
+# "750630.892" into "750630892" on a noisy phone photo) - without them,
+# `\d{1,7}` greedily matches *some* 7-digit window inside a 9-digit run
+# and silently returns a wrong number instead of correctly matching
+# nothing. Confirmed against a real garbled-OCR case that produced a
+# coordinate that was 60 degrees of latitude off.
 _NUM_CORE = (
-    r"-?\d{1,3}(?:,\d{3})*\.\d+"  # decimal degrees or comma-grouped decimals
-    r"|-?\d{1,3}(?:,\d{3})+"  # comma-grouped integers
-    r"|-?\d{1,7}(?:\.\d+)?"  # plain integer/decimal
+    r"(?<!\d)-?\d{1,3}(?:,\d{3})*\.\d+(?!\d)"  # decimal degrees or comma-grouped decimals
+    r"|(?<!\d)-?\d{1,3}(?:,\d{3})+(?!\d)"  # comma-grouped integers
+    r"|(?<!\d)-?\d{1,7}(?:\.\d+)?(?!\d)"  # plain integer/decimal
 )
 
 # Matches decimal-degree numbers, comma-grouped projected coordinates
@@ -20,7 +27,11 @@ _NUM_CORE = (
 # "669803.42" or "669803"). Beacon/point labels ("B1", "Point 2") and
 # small figures (areas, plot numbers) are short integers with no comma
 # grouping or decimal point, so this naturally skips them.
-_NUM_RE = re.compile(r"-?\d{1,3}(?:,\d{3})*\.\d+|-?\d{1,3}(?:,\d{3})+|-?\d{5,7}(?:\.\d+)?")
+_NUM_RE = re.compile(
+    r"(?<!\d)-?\d{1,3}(?:,\d{3})*\.\d+(?!\d)"
+    r"|(?<!\d)-?\d{1,3}(?:,\d{3})+(?!\d)"
+    r"|(?<!\d)-?\d{5,7}(?:\.\d+)?(?!\d)"
+)
 
 # Explicit Northing/Easting labels (as used on Nigerian survey plan beacon
 # tables) let us resolve axis order with certainty instead of guessing.

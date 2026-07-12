@@ -10,6 +10,7 @@ from datetime import date
 from typing import Optional
 
 import folium
+import geopandas as gpd
 import streamlit as st
 from dotenv import load_dotenv
 from streamlit_folium import st_folium
@@ -54,6 +55,7 @@ def show_crs_disclaimer() -> None:
         f"[@PlotProof]({TWITTER_LINK}) before relying on this result for any transaction or "
         "legal decision."
     )
+
 
 st.set_page_config(page_title="PlotProof - Check Your Land Risk", page_icon="assets/logo.svg", layout="centered")
 st.markdown(theme.get_css(), unsafe_allow_html=True)
@@ -118,183 +120,183 @@ def _load_neighbors():
     return gis_processing.load_neighboring_plots()
 
 
-# ------------------------------
-# UPLOAD SECTION
-# ------------------------------
-step_header(1, "Upload Your Survey Document")
+CRS_OPTIONS = {"Auto-detect": None}
+CRS_OPTIONS.update({name: epsg for epsg, name in crs_utils.NIGERIA_CRS_CANDIDATES.items()})
 
-uploaded_file = st.file_uploader(
-    "Upload Survey Plan (PDF or Image)",
-    type=["pdf", "png", "jpg", "jpeg"],
-    help="We'll try to read boundary coordinates straight from the file (text or OCR).",
-)
-
-help_improve = st.checkbox(
-    "Help improve coordinate extraction",
-    value=False,
-    help=(
-        "Survey plan formats vary a lot, and PlotProof gets better at reading them over time. "
-        "If checked, we save this document's text, the coordinates we auto-detected, and whatever "
-        "you confirm/correct below - used only to improve extraction on future formats, never shared. "
-        "Leave unchecked if you'd rather not."
-    ),
-)
-
-def _extract_and_store(saved_path: str, file_type: str, forced_epsg: Optional[str] = None) -> None:
-    """(Re-)runs extraction from the uploaded file and stores the result,
-    used both on first upload and whenever the CRS override changes.
-    Extraction touches unpredictable third-party file content (PDF
-    internals, OCR), so failures here must degrade to manual entry rather
-    than crash the app - the full exception is logged server-side either way."""
-    try:
-        extracted_text, extraction_method = file_handler.extract_text_from_file(saved_path)
-        # Vector-based boundary reconstruction needs a real local PDF file to
-        # open - not applicable to images or Supabase-hosted uploads.
-        pdf_path = saved_path if file_type == "pdf" and file_handler.storage_backend() == "local" else None
-        extracted_points, crs_note = parse_coordinate_text(extracted_text, pdf_path=pdf_path, forced_epsg=forced_epsg)
-    except Exception:
-        traceback.print_exc()
-        st.session_state["_upload_record"] = None
-        show_error(
-            "Something went wrong reading this file automatically. The technical details were "
-            "logged for review - in the meantime, please enter coordinates manually below."
-        )
-        return
-
-    st.session_state["_upload_record"] = {
-        "source_file_ref": saved_path,
-        "pdf_path": pdf_path,
-        "file_type": file_type,
-        "extraction_method": extraction_method,
-        "raw_extracted_text": extracted_text,
-        "auto_detected_points": extracted_points,
-        "auto_detected_crs_note": crs_note,
-    }
-    if extracted_points:
-        st.session_state["coords_text"] = "\n".join(f"{lat}, {lon}" for lat, lon in extracted_points)
-        msg = f"Found {len(extracted_points)} coordinate point(s) in your file."
-        if crs_note and crs_note != "undetected":
-            msg += f" Converted from {crs_note} to WGS84."
-        st.success(f"{msg} Review below.")
-        if crs_is_uncertain(crs_note):
-            show_crs_disclaimer()
-    elif crs_note == "undetected":
-        show_warning(
-            "Found projected coordinates in this file but couldn't confidently match them "
-            "to a known Nigerian coordinate system. Please double-check the source document, "
-            "or enter WGS84 latitude/longitude manually below."
-        )
-    else:
-        show_warning("Couldn't detect coordinates in this file automatically - please enter them below.")
-
-
-crs_options = {"Auto-detect": None}
-crs_options.update({name: epsg for epsg, name in crs_utils.NIGERIA_CRS_CANDIDATES.items()})
-
-if uploaded_file is not None:
-    file_key = (uploaded_file.name, uploaded_file.size)
-    if st.session_state.get("_last_uploaded_key") != file_key:
-        st.session_state["_last_uploaded_key"] = file_key
-        st.session_state["_crs_override"] = "Auto-detect"
-        st.session_state["_last_applied_override"] = "Auto-detect"
-        with st.spinner("Reading coordinates from your file..."):
-            saved_path = file_handler.save_uploaded_file(uploaded_file)
-            file_type = os.path.splitext(uploaded_file.name)[1].lstrip(".").lower()
-            _extract_and_store(saved_path, file_type)
-
-step_header(2, "Confirm or Enter Coordinates")
-
-# Rendered before the coordinates box below so that, if this changes,
-# _extract_and_store() can update coords_text before that widget is
-# instantiated (Streamlit forbids writing to a widget's session_state key
-# after it's already rendered in the current run) - no st.rerun() needed,
-# the script just continues on and renders the text_area with the fresh
-# value, the same way the initial upload flow already works.
-selected_crs_label = st.selectbox(
-    "Coordinate system (only needed if auto-detection looks wrong)",
-    options=list(crs_options.keys()),
-    key="_crs_override",
-    help=(
-        "PlotProof tries to detect this automatically from the document, but a plan that only "
-        "states a UTM zone (not the datum) can't always be resolved with certainty. If the "
-        "detected system looks wrong, select the correct one here - if you uploaded a file, "
-        "coordinates are re-extracted from it using your selection. Doesn't apply if your "
-        "coordinates are already plain latitude/longitude - those need no CRS at all."
-    ),
-)
-forced_epsg = crs_options[selected_crs_label]
-upload_record = st.session_state.get("_upload_record")
-if upload_record and st.session_state.get("_last_applied_override") != selected_crs_label:
-    st.session_state["_last_applied_override"] = selected_crs_label
-    _extract_and_store(upload_record["source_file_ref"], upload_record["file_type"], forced_epsg=forced_epsg)
-
-st.caption("One point per line: latitude, longitude. Add all boundary corners (3+) for an accurate plot outline.")
-coordinates_text = st.text_area(
-    "Coordinates",
-    key="coords_text",
-    placeholder="6.5244, 3.3792\n6.5246, 3.3799\n6.5251, 3.3797",
-    height=120,
-    label_visibility="collapsed",
-)
 
 # ------------------------------
-# ANALYZE
+# SHARED: one document's upload + CRS override + coordinates input.
+# Used once for the standard single-plot check, and twice (Plot A / Plot
+# B) for the two-plot comparison mode below. Session state and widget
+# keys are namespaced by `slot` so the two instances never collide -
+# slot="" reuses the original unprefixed keys so the standard flow's
+# behavior is unchanged.
 # ------------------------------
-if st.button("Analyze My Land", type="primary"):
-    points, crs_note = parse_coordinate_text(coordinates_text, forced_epsg=forced_epsg)
-    # The box shows clean WGS84 decimals after upload (for readability), which
-    # no longer looks projected on re-parse - so re-detection legitimately finds
-    # nothing here. Reuse the upload-time CRS note when the points are still
-    # exactly what was auto-extracted (i.e. the user hasn't retyped them).
-    upload_record_for_note = st.session_state.get("_upload_record")
-    if crs_note is None and upload_record_for_note and points == upload_record_for_note["auto_detected_points"]:
-        crs_note = upload_record_for_note["auto_detected_crs_note"]
-    if not points:
-        if crs_note == "undetected":
+def render_document_input(
+    slot: str,
+    upload_step: tuple,
+    coords_step: Optional[tuple] = None,
+    disabled: bool = False,
+) -> dict:
+    def k(base: str) -> str:
+        return base if not slot else f"{base}_{slot}"
+
+    def extract_and_store(saved_path: str, file_type: str, forced_epsg: Optional[str] = None) -> None:
+        """(Re-)runs extraction from the uploaded file and stores the result,
+        used both on first upload and whenever the CRS override changes.
+        Extraction touches unpredictable third-party file content (PDF
+        internals, OCR), so failures here must degrade to manual entry
+        rather than crash the app - the full exception is logged
+        server-side either way."""
+        try:
+            extracted_text, extraction_method = file_handler.extract_text_from_file(saved_path)
+            # Vector-based boundary reconstruction needs a real local PDF
+            # file to open - not applicable to images or Supabase-hosted uploads.
+            pdf_path = saved_path if file_type == "pdf" and file_handler.storage_backend() == "local" else None
+            extracted_points, crs_note = parse_coordinate_text(extracted_text, pdf_path=pdf_path, forced_epsg=forced_epsg)
+        except Exception:
+            traceback.print_exc()
+            st.session_state[k("_upload_record")] = None
             show_error(
-                "These look like projected (Easting/Northing) coordinates, but they couldn't be "
-                "confidently matched to a known Nigerian coordinate system. Please enter WGS84 "
-                "latitude/longitude instead."
+                "Something went wrong reading this file automatically. The technical details "
+                "were logged for review - in the meantime, please enter coordinates manually below."
+            )
+            return
+
+        st.session_state[k("_upload_record")] = {
+            "source_file_ref": saved_path,
+            "pdf_path": pdf_path,
+            "file_type": file_type,
+            "extraction_method": extraction_method,
+            "raw_extracted_text": extracted_text,
+            "auto_detected_points": extracted_points,
+            "auto_detected_crs_note": crs_note,
+        }
+        if extracted_points:
+            st.session_state[k("coords_text")] = "\n".join(f"{lat}, {lon}" for lat, lon in extracted_points)
+            msg = f"Found {len(extracted_points)} coordinate point(s) in your file."
+            if crs_note and crs_note != "undetected":
+                msg += f" Converted from {crs_note} to WGS84."
+            st.success(f"{msg} Review below.")
+            if crs_is_uncertain(crs_note):
+                show_crs_disclaimer()
+        elif crs_note == "undetected":
+            show_warning(
+                "Found projected coordinates in this file but couldn't confidently match them "
+                "to a known Nigerian coordinate system. Please double-check the source document, "
+                "or enter WGS84 latitude/longitude manually below."
             )
         else:
-            show_error("Please upload a file or enter at least one coordinate.")
-    else:
-        with st.spinner("Analyzing your land boundaries..."):
-            neighbors_gdf = _load_neighbors()
-            user_gdf = gis_processing.build_user_plot_gdf(points)
-            overlap_result = gis_processing.analyze_overlap(user_gdf, neighbors_gdf)
-            result = risk_calculator.calculate_risk(
-                points, overlap_result, boundary_is_measured=len(points) >= 3
-            )
+            show_warning("Couldn't detect coordinates in this file automatically - please enter them below.")
 
-        upload_record = st.session_state.get("_upload_record")
-        if help_improve and upload_record:
-            training_data.record_example(
-                source_file_ref=upload_record["source_file_ref"],
-                file_type=upload_record["file_type"],
-                extraction_method=upload_record["extraction_method"],
-                raw_extracted_text=upload_record["raw_extracted_text"],
-                auto_detected_points=upload_record["auto_detected_points"],
-                auto_detected_crs_note=upload_record["auto_detected_crs_note"],
-                user_confirmed_points=points,
-            )
+    step_header(*upload_step)
+    uploaded_file = st.file_uploader(
+        "Upload Survey Plan (PDF or Image)",
+        type=["pdf", "png", "jpg", "jpeg"],
+        help="We'll try to read boundary coordinates straight from the file (text or OCR).",
+        key=k("file_uploader"),
+        disabled=disabled,
+    )
+    help_improve = st.checkbox(
+        "Help improve coordinate extraction",
+        value=False,
+        key=k("help_improve"),
+        disabled=disabled,
+        help=(
+            "Survey plan formats vary a lot, and PlotProof gets better at reading them over time. "
+            "If checked, we save this document's text, the coordinates we auto-detected, and "
+            "whatever you confirm/correct below - used only to improve extraction on future "
+            "formats, never shared. Leave unchecked if you'd rather not."
+        ),
+    )
 
-        st.session_state["result"] = result
-        st.session_state["points"] = points
-        st.session_state["crs_note"] = crs_note
-        st.session_state["user_gdf"] = user_gdf
-        st.session_state["neighbors_gdf"] = neighbors_gdf
+    if uploaded_file is not None and not disabled:
+        file_key = (uploaded_file.name, uploaded_file.size)
+        if st.session_state.get(k("_last_uploaded_key")) != file_key:
+            st.session_state[k("_last_uploaded_key")] = file_key
+            st.session_state[k("_crs_override")] = "Auto-detect"
+            st.session_state[k("_last_applied_override")] = "Auto-detect"
+            with st.spinner("Reading coordinates from your file..."):
+                saved_path = file_handler.save_uploaded_file(uploaded_file)
+                file_type = os.path.splitext(uploaded_file.name)[1].lstrip(".").lower()
+                extract_and_store(saved_path, file_type)
+
+    if coords_step:
+        step_header(*coords_step)
+
+    # Rendered before the coordinates box below so that, if this changes,
+    # extract_and_store() can update coords_text before that widget is
+    # instantiated (Streamlit forbids writing to a widget's session_state
+    # key after it's already rendered in the current run) - no st.rerun()
+    # needed, the script just continues on and renders the text_area with
+    # the fresh value, the same way the initial upload flow already works.
+    selected_crs_label = st.selectbox(
+        "Coordinate system (only needed if auto-detection looks wrong)",
+        options=list(CRS_OPTIONS.keys()),
+        key=k("_crs_override"),
+        disabled=disabled,
+        help=(
+            "PlotProof tries to detect this automatically from the document, but a plan that "
+            "only states a UTM zone (not the datum) can't always be resolved with certainty. If "
+            "the detected system looks wrong, select the correct one here - if you uploaded a "
+            "file, coordinates are re-extracted from it using your selection. Doesn't apply if "
+            "your coordinates are already plain latitude/longitude - those need no CRS at all."
+        ),
+    )
+    forced_epsg = CRS_OPTIONS[selected_crs_label]
+    upload_record = st.session_state.get(k("_upload_record"))
+    if upload_record and not disabled and st.session_state.get(k("_last_applied_override")) != selected_crs_label:
+        st.session_state[k("_last_applied_override")] = selected_crs_label
+        extract_and_store(upload_record["source_file_ref"], upload_record["file_type"], forced_epsg=forced_epsg)
+
+    st.caption("One point per line: latitude, longitude. Add all boundary corners (3+) for an accurate plot outline.")
+    coordinates_text = st.text_area(
+        "Coordinates",
+        key=k("coords_text"),
+        placeholder="6.5244, 3.3792\n6.5246, 3.3799\n6.5251, 3.3797",
+        height=120,
+        label_visibility="collapsed",
+        disabled=disabled,
+    )
+
+    return {
+        "coordinates_text": coordinates_text,
+        "forced_epsg": forced_epsg,
+        "help_improve": help_improve,
+        "upload_record": st.session_state.get(k("_upload_record")),
+    }
+
+
+def resolve_points(inputs: dict) -> tuple:
+    """Parses an input dict's coordinates box, reusing the upload-time CRS
+    note when the box still holds exactly what was auto-extracted (see the
+    comment at the original call site - the box shows converted WGS84
+    decimals after upload, which no longer look projected on re-parse)."""
+    points, crs_note = parse_coordinate_text(inputs["coordinates_text"], forced_epsg=inputs["forced_epsg"])
+    upload_record = inputs["upload_record"]
+    if crs_note is None and upload_record and points == upload_record["auto_detected_points"]:
+        crs_note = upload_record["auto_detected_crs_note"]
+    return points, crs_note
+
 
 # ------------------------------
-# RESULTS
+# SHARED: results rendering (risk badge, findings, map, PDF). Used for
+# both the standard registry-wide check and the two-plot direct
+# comparison - `context_note`/`show_registry_features` tune the parts
+# that only make sense for one or the other.
 # ------------------------------
-if "result" in st.session_state:
-    result = st.session_state["result"]
-    points = st.session_state["points"]
-    user_gdf = st.session_state["user_gdf"]
-    neighbors_gdf = st.session_state["neighbors_gdf"]
-
-    crs_note = st.session_state.get("crs_note")
+def render_results(
+    result: dict,
+    points: list,
+    user_gdf,
+    neighbors_gdf,
+    crs_note: Optional[str],
+    step_num: int,
+    map_step_num: int,
+    show_registry_features: bool = True,
+    map_caption: str = "Shows registered plots in the immediate surroundings, not the full registry.",
+    use_context_radius: bool = True,
+) -> None:
     if crs_note and crs_note != "undetected":
         st.markdown(
             f"""<div class="pp-pill">{icons.icon("ruler", size=14)} Coordinates converted from
@@ -304,7 +306,7 @@ if "result" in st.session_state:
         if crs_is_uncertain(crs_note):
             show_crs_disclaimer()
 
-    step_header(3, "Risk Assessment")
+    step_header(step_num, "Risk Assessment")
     risk_level = result["risk_level"]
     status = theme.RISK_TO_STATUS[risk_level]
     st.markdown(
@@ -317,19 +319,28 @@ if "result" in st.session_state:
         unsafe_allow_html=True,
     )
 
-    registry_count = registry.count()
-    coverage_note = (
-        f" checked against {registry_count} community-contributed plot(s) plus our sample data"
-        if registry_count
-        else ""
-    )
-    st.markdown(
-        f"""<div class="pp-pill">{icons.icon("info", size=14)} This result reflects plots on
-        record as of {date.today().strftime("%d %b %Y")}{coverage_note}. It isn't permanent -
-        if a neighboring plot is added to the registry later, re-running this check could surface
-        a different result. Re-check periodically, especially before finalizing a transaction.</div>""",
-        unsafe_allow_html=True,
-    )
+    if show_registry_features:
+        registry_count = registry.count()
+        coverage_note = (
+            f" checked against {registry_count} community-contributed plot(s) plus our sample data"
+            if registry_count
+            else ""
+        )
+        st.markdown(
+            f"""<div class="pp-pill">{icons.icon("info", size=14)} This result reflects plots on
+            record as of {date.today().strftime("%d %b %Y")}{coverage_note}. It isn't permanent -
+            if a neighboring plot is added to the registry later, re-running this check could
+            surface a different result. Re-check periodically, especially before finalizing a
+            transaction.</div>""",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f"""<div class="pp-pill">{icons.icon("info", size=14)} This compares only the two
+            plots you provided, as of {date.today().strftime("%d %b %Y")} - it does not check
+            either plot against the shared registry or sample data.</div>""",
+            unsafe_allow_html=True,
+        )
 
     findings_html = "".join(
         f"<li>{icons.dot('#898781', size=8)}<span>{f}</span></li>" for f in result["findings"]
@@ -349,13 +360,13 @@ if "result" in st.session_state:
         unsafe_allow_html=True,
     )
 
-    step_header(4, "Map View")
-    st.caption("Shows registered plots in the immediate surroundings, not the full registry.")
+    step_header(map_step_num, "Map View")
+    st.caption(map_caption)
     overlap_refs = {o["plot_ref"] for o in result["overlaps"]}
     proximate_refs = {p["plot_ref"] for p in result["proximate"]}
     user_geom = user_gdf.geometry.iloc[0]
     centroid = user_geom.centroid
-    context_gdf = gis_processing.nearby_plots_for_context(user_gdf, neighbors_gdf)
+    context_gdf = gis_processing.nearby_plots_for_context(user_gdf, neighbors_gdf) if use_context_radius else neighbors_gdf
 
     fmap = folium.Map(location=[centroid.y, centroid.x], zoom_start=17)
     folium.GeoJson(
@@ -379,7 +390,7 @@ if "result" in st.session_state:
             tooltip=f"{ref} - {row.get('owner', 'unknown')}",
         ).add_to(fmap)
 
-    st_folium(fmap, width=700, height=400, key="risk_map")
+    st_folium(fmap, width=700, height=400, key=f"risk_map_{step_num}")
     st.markdown(
         f"""
         <div class="pp-legend">
@@ -398,12 +409,10 @@ if "result" in st.session_state:
         data=pdf_buffer,
         file_name="PlotProof_Report.pdf",
         mime="application/pdf",
+        key=f"download_{step_num}",
     )
 
-    # ------------------------------
-    # SHARED REGISTRY OPT-IN
-    # ------------------------------
-    if user_gdf["source"].iloc[0] == "survey_polygon":
+    if show_registry_features and user_gdf["source"].iloc[0] == "survey_polygon":
         added_ref = st.session_state.get("_registry_plot_ref")
         if added_ref:
             st.markdown(
@@ -431,36 +440,185 @@ if "result" in st.session_state:
                 st.session_state["_registry_plot_ref"] = registry.add_plot(points)
                 st.rerun()
 
-    # ------------------------------
-    # VIRAL SHARING CTA
-    # ------------------------------
-    if risk_level == "Low":
-        share_text = (
-            "No boundary conflicts found on my land with PlotProof - but that's only because "
-            "my neighbors haven't checked yet either. The more plots on record, the safer "
-            "everyone's boundary check becomes. Check yours free:"
+    if show_registry_features:
+        if risk_level == "Low":
+            share_text = (
+                "No boundary conflicts found on my land with PlotProof - but that's only because "
+                "my neighbors haven't checked yet either. The more plots on record, the safer "
+                "everyone's boundary check becomes. Check yours free:"
+            )
+        else:
+            share_text = (
+                f"PlotProof flagged a {risk_level.lower()} boundary risk on my land - a free tool "
+                "that checks for overlapping plots. Worth checking yours too, especially if we're neighbors:"
+            )
+        whatsapp_share_link = f"https://wa.me/?text={urllib.parse.quote(share_text + ' ' + APP_URL)}"
+        st.markdown(
+            f"""
+            <div class="pp-card">
+              <div class="pp-card-title">{icons.icon("share", size=16)} Help Make Everyone's Check More Accurate</div>
+              <p>{share_text}</p>
+              <div class="pp-cta-row">
+                <a class="pp-cta pp-cta--solid" href="{whatsapp_share_link}" target="_blank" rel="noopener">
+                  {icons.icon("chat", color="#ffffff", size=18)} Share on WhatsApp
+                </a>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
-    else:
-        share_text = (
-            f"PlotProof flagged a {risk_level.lower()} boundary risk on my land - a free tool "
-            "that checks for overlapping plots. Worth checking yours too, especially if we're neighbors:"
+        st.code(APP_URL, language=None)
+
+
+# ------------------------------
+# MODE SELECTOR
+# ------------------------------
+mode = st.radio(
+    "What would you like to do?",
+    ["Check my land against known plots", "Compare two specific plots"],
+    key="_mode",
+    help=(
+        "\"Check my land\" compares your plot against our sample data and the shared registry. "
+        "\"Compare two specific plots\" checks your plot directly against one specific "
+        "neighboring plot you provide - useful when you already have (or can get) your "
+        "neighbor's survey plan and want a direct answer."
+    ),
+)
+
+if mode == "Check my land against known plots":
+    # ------------------------------
+    # SINGLE-PLOT CHECK
+    # ------------------------------
+    inputs = render_document_input("", (1, "Upload Your Survey Document"), (2, "Confirm or Enter Coordinates"))
+
+    if st.button("Analyze My Land", type="primary"):
+        points, crs_note = resolve_points(inputs)
+        if not points:
+            if crs_note == "undetected":
+                show_error(
+                    "These look like projected (Easting/Northing) coordinates, but they couldn't "
+                    "be confidently matched to a known Nigerian coordinate system. Please enter "
+                    "WGS84 latitude/longitude instead."
+                )
+            else:
+                show_error("Please upload a file or enter at least one coordinate.")
+        else:
+            with st.spinner("Analyzing your land boundaries..."):
+                neighbors_gdf = _load_neighbors()
+                user_gdf = gis_processing.build_user_plot_gdf(points)
+                overlap_result = gis_processing.analyze_overlap(user_gdf, neighbors_gdf)
+                result = risk_calculator.calculate_risk(
+                    points, overlap_result, boundary_is_measured=len(points) >= 3
+                )
+
+            upload_record = inputs["upload_record"]
+            if inputs["help_improve"] and upload_record:
+                training_data.record_example(
+                    source_file_ref=upload_record["source_file_ref"],
+                    file_type=upload_record["file_type"],
+                    extraction_method=upload_record["extraction_method"],
+                    raw_extracted_text=upload_record["raw_extracted_text"],
+                    auto_detected_points=upload_record["auto_detected_points"],
+                    auto_detected_crs_note=upload_record["auto_detected_crs_note"],
+                    user_confirmed_points=points,
+                )
+
+            st.session_state["result"] = result
+            st.session_state["points"] = points
+            st.session_state["crs_note"] = crs_note
+            st.session_state["user_gdf"] = user_gdf
+            st.session_state["neighbors_gdf"] = neighbors_gdf
+
+    if "result" in st.session_state:
+        render_results(
+            st.session_state["result"],
+            st.session_state["points"],
+            st.session_state["user_gdf"],
+            st.session_state["neighbors_gdf"],
+            st.session_state.get("crs_note"),
+            step_num=3,
+            map_step_num=4,
+            show_registry_features=True,
         )
-    whatsapp_share_link = f"https://wa.me/?text={urllib.parse.quote(share_text + ' ' + APP_URL)}"
+
+else:
+    # ------------------------------
+    # TWO-PLOT COMPARISON
+    # ------------------------------
     st.markdown(
-        f"""
+        """
         <div class="pp-card">
-          <div class="pp-card-title">{icons.icon("share", size=16)} Help Make Everyone's Check More Accurate</div>
-          <p>{share_text}</p>
-          <div class="pp-cta-row">
-            <a class="pp-cta pp-cta--solid" href="{whatsapp_share_link}" target="_blank" rel="noopener">
-              {icons.icon("chat", color="#ffffff", size=18)} Share on WhatsApp
-            </a>
-          </div>
+          <div class="pp-card-title">Before you compare</div>
+          <p>This checks your plot directly against a specific neighboring plot - which means
+          uploading or entering <strong>your neighbor's</strong> survey data, not just your own.
+          Their survey plan is personal property information, the same as yours, and they need to
+          have agreed to it being uploaded and compared here. PlotProof doesn't verify this
+          consent independently - you're responsible for having it before continuing.</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    st.code(APP_URL, language=None)
+    neighbor_consent = st.checkbox(
+        "I confirm my neighbor has agreed to have their survey plan uploaded and compared, "
+        "and understands the result may be shared with me."
+    )
+    if not neighbor_consent:
+        st.caption("Check the box above to enter your neighbor's plot details.")
+
+    inputs_a = render_document_input("a", (1, "Your Plot"))
+    inputs_b = render_document_input("b", (2, "Neighboring Plot"), disabled=not neighbor_consent)
+
+    if st.button("Compare Plots", type="primary", disabled=not neighbor_consent):
+        points_a, crs_note_a = resolve_points(inputs_a)
+        points_b, crs_note_b = resolve_points(inputs_b)
+        if not points_a or not points_b:
+            show_error("Please provide valid coordinates for both your plot and the neighboring plot.")
+        else:
+            with st.spinner("Comparing the two plots..."):
+                user_gdf = gis_processing.build_user_plot_gdf(points_a)
+                neighbor_geom_gdf = gis_processing.build_user_plot_gdf(points_b)
+                neighbor_gdf = gpd.GeoDataFrame(
+                    {"plot_ref": ["Neighboring Plot"], "owner": ["Provided by you"]},
+                    geometry=neighbor_geom_gdf.geometry,
+                    crs="EPSG:4326",
+                )
+                overlap_result = gis_processing.analyze_overlap(user_gdf, neighbor_gdf)
+                result = risk_calculator.calculate_risk(
+                    points_a, overlap_result, boundary_is_measured=len(points_a) >= 3
+                )
+
+            for inputs, points in ((inputs_a, points_a), (inputs_b, points_b)):
+                upload_record = inputs["upload_record"]
+                if inputs["help_improve"] and upload_record:
+                    training_data.record_example(
+                        source_file_ref=upload_record["source_file_ref"],
+                        file_type=upload_record["file_type"],
+                        extraction_method=upload_record["extraction_method"],
+                        raw_extracted_text=upload_record["raw_extracted_text"],
+                        auto_detected_points=upload_record["auto_detected_points"],
+                        auto_detected_crs_note=upload_record["auto_detected_crs_note"],
+                        user_confirmed_points=points,
+                    )
+
+            st.session_state["_compare_result"] = result
+            st.session_state["_compare_points"] = points_a
+            st.session_state["_compare_crs_note"] = crs_note_a
+            st.session_state["_compare_user_gdf"] = user_gdf
+            st.session_state["_compare_neighbor_gdf"] = neighbor_gdf
+
+    if "_compare_result" in st.session_state:
+        render_results(
+            st.session_state["_compare_result"],
+            st.session_state["_compare_points"],
+            st.session_state["_compare_user_gdf"],
+            st.session_state["_compare_neighbor_gdf"],
+            st.session_state.get("_compare_crs_note"),
+            step_num=3,
+            map_step_num=4,
+            show_registry_features=False,
+            map_caption="Shows your plot against the neighboring plot you provided.",
+            use_context_radius=False,
+        )
 
 # ------------------------------
 # CONSULTATION CTA

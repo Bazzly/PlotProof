@@ -28,17 +28,30 @@ ACCENT_DARK = "#3987e5"
 RISK_TO_STATUS = {"Low": "good", "Medium": "warning", "High": "critical"}
 RISK_TO_ICON = {"Low": "check-circle", "Medium": "alert-triangle", "High": "alert-octagon"}
 
+# Light-mode chrome/ink tokens, factored out so anything that only ever
+# renders on a white background (the PDF report - paper doesn't have a
+# dark mode) can match the app's palette instead of hardcoding its own.
+INK = {
+    "surface": "#fcfcfb",
+    "page": "#f9f9f7",
+    "primary": "#0b0b0b",
+    "secondary": "#52514e",
+    "muted": "#898781",
+    "gridline": "#e1e0d9",
+    "border": "#e0dfd9",
+}
+
 
 def get_css() -> str:
     return f"""
 <style>
 :root {{
-  --pp-surface: #fcfcfb;
-  --pp-page: #f9f9f7;
-  --pp-ink-primary: #0b0b0b;
-  --pp-ink-secondary: #52514e;
-  --pp-ink-muted: #898781;
-  --pp-gridline: #e1e0d9;
+  --pp-surface: {INK['surface']};
+  --pp-page: {INK['page']};
+  --pp-ink-primary: {INK['primary']};
+  --pp-ink-secondary: {INK['secondary']};
+  --pp-ink-muted: {INK['muted']};
+  --pp-gridline: {INK['gridline']};
   --pp-border: rgba(11,11,11,0.10);
   --pp-accent: {ACCENT_LIGHT};
   --pp-good: {STATUS['good']};
