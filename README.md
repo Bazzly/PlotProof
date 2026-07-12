@@ -35,7 +35,7 @@ Recommended: **Streamlit Community Cloud** (free, no server to manage, matches t
 
 ```bash
 git init
-git add app.py utils legal requirements.txt packages.txt .env.example .gitignore .streamlit/config.toml data/sample_data
+git add app.py app_home.py pages utils legal requirements.txt packages.txt .env.example .gitignore .streamlit/config.toml data/sample_data
 git commit -m "PlotProof MVP"
 git remote add origin https://github.com/<your-username>/plotproof.git
 git branch -M main
@@ -63,8 +63,9 @@ git push -u origin main
    PRIVACY_CONTACT_EMAIL = ""
    ANTHROPIC_API_KEY = ""
    ADMIN_PASSWORD = ""
+   ADMIN_URL_PATH = ""
    ```
-   Streamlit Cloud exposes these as environment variables at runtime - no code changes needed. Leave `SUPABASE_URL`/`SUPABASE_KEY` blank to keep using local disk storage. **Set `PRIVACY_CONTACT_EMAIL` before directing real users here** - without it, the Privacy Policy honestly (but unprofessionally) says no contact address is configured yet. Leave `ANTHROPIC_API_KEY` blank to keep image extraction on the free OCR path instead of vision (see below); leave `ADMIN_PASSWORD` blank to keep the admin review portal disabled.
+   Streamlit Cloud exposes these as environment variables at runtime - no code changes needed. Leave `SUPABASE_URL`/`SUPABASE_KEY` blank to keep using local disk storage. **Set `PRIVACY_CONTACT_EMAIL` before directing real users here** - without it, the Privacy Policy honestly (but unprofessionally) says no contact address is configured yet. Leave `ANTHROPIC_API_KEY` blank to keep image extraction on the free OCR path instead of vision (see below); leave `ADMIN_PASSWORD` blank to keep the admin portal disabled. **Set `ADMIN_URL_PATH` to something random** (not the default) before directing real users here too - see [Admin portal](#admin-portal) below. Write down the URL/password combo in your own local `ADMIN_ACCESS.md` (gitignored - see the template instructions there), not anywhere that ends up in git history or chat logs.
 5. Click **Deploy**. First build takes a few minutes (installs GeoPandas/Shapely/tesseract).
 
 You'll get a live URL like `https://plotproof.streamlit.app`.
@@ -103,12 +104,12 @@ This only runs for image uploads (PDFs already extract well without it) and only
 
 ## Admin portal
 
-`pages/admin_review.py` (Streamlit auto-discovers anything under `pages/` and adds it to the sidebar nav as "admin review") has two tabs:
+`app.py` is a thin `st.navigation()` entrypoint - the actual app content lives in `app_home.py`, and `st.navigation([...], position="hidden")` means **no sidebar nav is rendered at all**, for either page. This is deliberate: Streamlit's default behavior would auto-list anything under `pages/` (including the admin portal) in a visible sidebar for every visitor. `pages/admin_review.py` is only reachable by going directly to `<APP_URL>/<ADMIN_URL_PATH>` - a URL slug set via the `ADMIN_URL_PATH` env var (default `admin-review`, which is guessable from this public repo, so **set a random one before directing real users here** - see `.env.example`). Once there, it has two tabs:
 
 - **API Key** - view (masked) and rotate the Anthropic API key at runtime, via `utils/app_config.py`. This repo is public, so the key can never be committed; a key set here overrides the `ANTHROPIC_API_KEY` env var immediately for every future request, no redeploy or Streamlit Cloud secrets-panel access needed. Storage mirrors the rest of the app (local JSON by default, a Supabase `app_config` table if configured - schema at the top of that file) - either way it holds a live secret, so the local file is gitignored and a Supabase-backed deployment should restrict the table with RLS. Use "Clear admin override" to fall back to the env var again (e.g. after rotating it there instead).
 - **Extraction Review** - browses every opt-in record `utils/training_data.py` has collected: source image thumbnail, the raw extracted text or vision summary, auto-detected CRS note, and auto-detected vs. user-confirmed points side by side. Exists to give visibility into real-world extraction failures (a document that returned zero points despite being legible, or one a user had to significantly correct) rather than only finding out about them anecdotally. Filter by extraction method, "failures only" (zero auto-detected points), or "corrected only" to jump straight to the cases worth looking at.
 
-Gated behind `ADMIN_PASSWORD` (env var) - the whole page refuses to render at all, even the password prompt, if that's unset, so it can't be accidentally left open with no gate. It's not linked from the main app; reachable only via the sidebar nav or a direct URL.
+Content access is separately gated behind `ADMIN_PASSWORD` (env var) - the whole page refuses to render at all, even the password prompt, if that's unset, so it can't be accidentally left open with no gate. The URL slug and the password are two independent layers: knowing one without the other gets you nowhere. See `ADMIN_ACCESS.md` (gitignored, not in this repo - a local template is created for you) for a place to record this deployment's actual URL/password without it ever touching git history or chat logs.
 
 ## Rate limiting & abuse protection
 
@@ -137,7 +138,7 @@ Records land in `data/registry/registry_plots.json` locally, or a `registry_plot
 
 ## Two-plot comparison mode
 
-Alongside the standard "check against known plots" flow, a mode selector (top of `app.py`) offers **"Compare two specific plots"** - checks a user's plot directly against one specific neighboring plot they provide, instead of against the registry/sample data. This means processing a second person's survey document, not just the uploader's own, so it's gated behind its own explicit consent checkbox ("I confirm my neighbor has agreed...") - the neighboring-plot inputs stay `disabled=True` until that's checked, and the Compare button stays disabled too. PlotProof doesn't and can't verify this consent independently; the uploader is attesting to having it.
+Alongside the standard "check against known plots" flow, a mode selector (top of `app_home.py`) offers **"Compare two specific plots"** - checks a user's plot directly against one specific neighboring plot they provide, instead of against the registry/sample data. This means processing a second person's survey document, not just the uploader's own, so it's gated behind its own explicit consent checkbox ("I confirm my neighbor has agreed...") - the neighboring-plot inputs stay `disabled=True` until that's checked, and the Compare button stays disabled too. PlotProof doesn't and can't verify this consent independently; the uploader is attesting to having it.
 
 Both flows share the same upload/CRS-override machinery (`render_document_input()`, namespaced by a `slot` argument so Plot A/B's session state and widget keys never collide) and the same results rendering (`render_results()`), just pointed at a single ad-hoc neighbor GeoDataFrame instead of `load_neighboring_plots()`. Comparison results skip the shared-registry opt-in and viral-sharing CTA - those are framed around a plot's relationship to the wider registry, which doesn't apply to a one-off direct comparison.
 
@@ -145,7 +146,7 @@ Unlike the standard mode, the neighbor here is a real document the user provided
 
 ## Terms of Service & Privacy Policy
 
-The app is gated behind a consent screen (`app.py`, right after the hero) - nothing else renders until a user checks "I have read and agree" and clicks through. `legal/terms.md` and `legal/privacy.md` hold the actual text (loaded via `utils/legal.py`), written around Nigeria's NDPA 2023 (the law that actually governs this app's users) plus GDPR-equivalent language for any EU users. Both are also re-readable anytime via an expander in the footer.
+The app is gated behind a consent screen (`app_home.py`, right after the hero) - nothing else renders until a user checks "I have read and agree" and clicks through. `legal/terms.md` and `legal/privacy.md` hold the actual text (loaded via `utils/legal.py`), written around Nigeria's NDPA 2023 (the law that actually governs this app's users) plus GDPR-equivalent language for any EU users. Both are also re-readable anytime via an expander in the footer.
 
 **This is a drafted starting point based on what the app actually does, not a substitute for a lawyer's review** - especially given real users' personal property data is involved. Before directing real users here:
 
@@ -159,9 +160,11 @@ Streamlit's own built-in usage telemetry is disabled via `.streamlit/config.toml
 
 ```
 landSuite/
-├── app.py                      # Streamlit app
+├── app.py                      # thin st.navigation() entrypoint (hides the admin page from any nav)
+├── app_home.py                 # the actual app - upload, coordinates, risk check, results
+├── ADMIN_ACCESS.md             # local-only admin URL/password notes (gitignored, not in repo)
 ├── pages/
-│   └── admin_review.py         # password-gated extraction-review portal
+│   └── admin_review.py         # password-gated admin portal (API key + extraction review)
 ├── scripts/
 │   └── vision_extract_prototype.py  # standalone CLI for testing vision extraction
 ├── requirements.txt

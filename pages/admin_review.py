@@ -10,10 +10,11 @@ Admin portal:
      extraction failures, the same class of failure that motivated
      building utils/vision_extract.py in the first place.
 
-Gated behind ADMIN_PASSWORD (env var). Not linked from the main app; only
-reachable via Streamlit's page nav or a direct URL, and refuses to render
-at all if no password is configured, so it can never be accidentally
-exposed with no gate.
+Gated behind ADMIN_PASSWORD (env var), and refuses to render at all if no
+password is configured, so it can never be accidentally exposed with no
+gate. Not linked from the main app and never listed in any sidebar/nav -
+see app.py's st.navigation(..., position="hidden") setup - only reachable
+by going directly to the URL slug set via ADMIN_URL_PATH.
 """
 
 import os
