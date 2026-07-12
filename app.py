@@ -296,6 +296,7 @@ def render_results(
     show_registry_features: bool = True,
     map_caption: str = "Shows registered plots in the immediate surroundings, not the full registry.",
     use_context_radius: bool = True,
+    pdf_neighbor_points: Optional[list] = None,
 ) -> None:
     if crs_note and crs_note != "undetected":
         st.markdown(
@@ -403,7 +404,18 @@ def render_results(
         unsafe_allow_html=True,
     )
 
-    pdf_buffer = report_generator.generate_pdf_report(result, points)
+    pdf_neighbor_plots = []
+    if pdf_neighbor_points:
+        neighbor_ref = neighbors_gdf.iloc[0].get("plot_ref", "Neighboring Plot")
+        if neighbor_ref in overlap_refs:
+            neighbor_status = "critical"
+        elif neighbor_ref in proximate_refs:
+            neighbor_status = "warning"
+        else:
+            neighbor_status = "good"
+        pdf_neighbor_plots.append({"label": neighbor_ref, "points": pdf_neighbor_points, "status": neighbor_status})
+
+    pdf_buffer = report_generator.generate_pdf_report(result, points, neighbor_plots=pdf_neighbor_plots)
     st.download_button(
         label="Download PDF Report",
         data=pdf_buffer,
@@ -602,6 +614,7 @@ else:
 
             st.session_state["_compare_result"] = result
             st.session_state["_compare_points"] = points_a
+            st.session_state["_compare_neighbor_points"] = points_b
             st.session_state["_compare_crs_note"] = crs_note_a
             st.session_state["_compare_user_gdf"] = user_gdf
             st.session_state["_compare_neighbor_gdf"] = neighbor_gdf
@@ -618,6 +631,7 @@ else:
             show_registry_features=False,
             map_caption="Shows your plot against the neighboring plot you provided.",
             use_context_radius=False,
+            pdf_neighbor_points=st.session_state.get("_compare_neighbor_points"),
         )
 
 # ------------------------------

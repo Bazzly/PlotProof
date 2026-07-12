@@ -14,7 +14,7 @@ import io
 import math
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
@@ -184,25 +184,64 @@ def _draw_risk_gauge(c: canvas.Canvas, y: float, risk_level: str) -> float:
     return y - seg_h - 0.38 * inch
 
 
-def _draw_plot_diagram(c: canvas.Canvas, y: float, points: List[Tuple[float, float]]) -> float:
+def _draw_polygon(c: canvas.Canvas, coords_xy: List[Tuple[float, float]], stroke: colors.Color, fill: colors.Color) -> None:
+    c.setFillColor(fill)
+    c.setStrokeColor(stroke)
+    c.setLineWidth(1.6)
+    path = c.beginPath()
+    path.moveTo(*coords_xy[0])
+    for px_, py_ in coords_xy[1:]:
+        path.lineTo(px_, py_)
+    path.close()
+    c.drawPath(path, stroke=1, fill=1)
+    c.setFillColor(stroke)
+    for px_, py_ in coords_xy:
+        c.circle(px_, py_, 2.2, stroke=0, fill=1)
+
+
+def _draw_buffer_circle(c: canvas.Canvas, cx: float, cy: float, r: float, stroke: colors.Color, fill: colors.Color) -> None:
+    c.setFillColor(fill)
+    c.setStrokeColor(stroke)
+    c.setDash(3, 2)
+    c.setLineWidth(1.6)
+    c.circle(cx, cy, r, stroke=1, fill=1)
+    c.setDash()
+    c.setFillColor(stroke)
+    c.circle(cx, cy, 2.2, stroke=0, fill=1)
+
+
+def _draw_plot_diagram(
+    c: canvas.Canvas,
+    y: float,
+    points: List[Tuple[float, float]],
+    neighbor_plots: Optional[List[Dict[str, Any]]] = None,
+) -> float:
+    """neighbor_plots: [{"label": str, "points": [(lat, lon), ...], "status": "good"|"warning"|"critical"}, ...]
+    - drawn on the same shared scale as `points` so a real overlap between
+    the two actually looks like one, rather than each plot being
+    independently normalized to fill the box (which would silently hide
+    that they overlap or how close they are)."""
+    neighbor_plots = neighbor_plots or []
+    legend_h = 0.22 * inch if neighbor_plots else 0
     box_size = 1.9 * inch
     box_x = PAGE_WIDTH - MARGIN - box_size
-    box_y = y - box_size
+    box_y = y - box_size - legend_h
 
     c.setFillColor(SURFACE)
     c.setStrokeColor(BORDER)
     c.setLineWidth(1)
-    c.roundRect(box_x, box_y, box_size, box_size, 8, stroke=1, fill=1)
+    c.roundRect(box_x, box_y, box_size, box_size + legend_h, 8, stroke=1, fill=1)
 
+    top = box_y + box_size + legend_h
     c.setFillColor(INK_SECONDARY)
     c.setFont("Helvetica-Bold", 8)
-    c.drawString(box_x + 8, box_y + box_size - 14, "PLOT BOUNDARY")
+    c.drawString(box_x + 8, top - 14, "PLOT BOUNDARY")
     c.setFont("Helvetica", 6.5)
     c.setFillColor(INK_MUTED)
-    c.drawString(box_x + 8, box_y + box_size - 24, "Schematic - not to scale")
+    c.drawString(box_x + 8, top - 24, "Schematic - not to scale")
 
     # North arrow.
-    nx, ny = box_x + box_size - 18, box_y + box_size - 30
+    nx, ny = box_x + box_size - 18, top - 30
     c.setStrokeColor(INK_MUTED)
     c.setFillColor(INK_MUTED)
     c.setLineWidth(1)
@@ -217,44 +256,62 @@ def _draw_plot_diagram(c: canvas.Canvas, y: float, points: List[Tuple[float, flo
 
     pad = 0.42 * inch
     inner = box_size - 2 * pad
-    cx, cy = box_x + box_size / 2, box_y + box_size / 2 - 0.06 * inch
+    cx = box_x + box_size / 2
+    cy = box_y + legend_h + box_size / 2 - 0.06 * inch
 
-    if len(points) >= 3:
-        lats = [p[0] for p in points]
-        lons = [p[1] for p in points]
-        span_lat = max(max(lats) - min(lats), 1e-9)
-        span_lon = max(max(lons) - min(lons), 1e-9)
+    all_sets = [points] + [n["points"] for n in neighbor_plots if n["points"]]
+    has_real_shape = any(len(pts) >= 3 for pts in all_sets)
+
+    if has_real_shape or len(all_sets) > 1:
+        all_lats = [p[0] for pts in all_sets for p in pts]
+        all_lons = [p[1] for pts in all_sets for p in pts]
+        span_lat = max(max(all_lats) - min(all_lats), 1e-9)
+        span_lon = max(max(all_lons) - min(all_lons), 1e-9)
         scale = inner / max(span_lat, span_lon)
-        mid_lat = (max(lats) + min(lats)) / 2
-        mid_lon = (max(lons) + min(lons)) / 2
+        mid_lat = (max(all_lats) + min(all_lats)) / 2
+        mid_lon = (max(all_lons) + min(all_lons)) / 2
 
-        coords = [(cx + (lon - mid_lon) * scale, cy + (lat - mid_lat) * scale) for lat, lon in points]
-        c.setFillColor(_tint(ACCENT, 0.65))
-        c.setStrokeColor(ACCENT)
-        c.setLineWidth(1.6)
-        path = c.beginPath()
-        path.moveTo(*coords[0])
-        for px_, py_ in coords[1:]:
-            path.lineTo(px_, py_)
-        path.close()
-        c.drawPath(path, stroke=1, fill=1)
+        def to_xy(pts: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+            return [(cx + (lon - mid_lon) * scale, cy + (lat - mid_lat) * scale) for lat, lon in pts]
 
-        c.setFillColor(ACCENT)
-        for px_, py_ in coords:
-            c.circle(px_, py_, 2.2, stroke=0, fill=1)
-    else:
+        for neighbor in neighbor_plots:
+            pts = neighbor["points"]
+            status_color = STATUS_COLORS[neighbor["status"]]
+            if not pts:
+                continue
+            if len(pts) >= 3:
+                _draw_polygon(c, to_xy(pts), status_color, _tint(status_color, 0.55))
+            else:
+                nx2, ny2 = to_xy(pts)[0]
+                _draw_buffer_circle(c, nx2, ny2, 10, status_color, _tint(status_color, 0.55))
+
+        if len(points) >= 3:
+            _draw_polygon(c, to_xy(points), ACCENT, _tint(ACCENT, 0.65))
+        elif points:
+            px_, py_ = to_xy(points)[0]
+            _draw_buffer_circle(c, px_, py_, 10, ACCENT, _tint(ACCENT, 0.65))
+    elif points:
         r = inner / 2.4
-        c.setFillColor(_tint(ACCENT, 0.65))
-        c.setStrokeColor(ACCENT)
-        c.setDash(3, 2)
-        c.setLineWidth(1.6)
-        c.circle(cx, cy, r, stroke=1, fill=1)
-        c.setDash()
-        c.setFillColor(ACCENT)
-        c.circle(cx, cy, 2.2, stroke=0, fill=1)
+        _draw_buffer_circle(c, cx, cy, r, ACCENT, _tint(ACCENT, 0.65))
         c.setFont("Helvetica-Oblique", 6.5)
         c.setFillColor(INK_MUTED)
-        c.drawCentredString(cx, box_y + 10, "Estimated extent (buffer)")
+        c.drawCentredString(cx, box_y + legend_h + 10, "Estimated extent (buffer)")
+
+    if neighbor_plots:
+        ly = box_y + 9
+        lx = box_x + 8
+        c.setFont("Helvetica", 6.5)
+        c.setFillColor(ACCENT)
+        c.circle(lx, ly + 2, 3, stroke=0, fill=1)
+        c.setFillColor(INK_SECONDARY)
+        c.drawString(lx + 7, ly, "Your plot")
+        lx += 0.75 * inch
+        label = neighbor_plots[0]["label"]
+        label = label if len(label) <= 20 else label[:18] + "…"
+        c.setFillColor(STATUS_COLORS[neighbor_plots[0]["status"]])
+        c.circle(lx, ly + 2, 3, stroke=0, fill=1)
+        c.setFillColor(INK_SECONDARY)
+        c.drawString(lx + 7, ly, label)
 
     return box_x
 
@@ -305,7 +362,9 @@ def _draw_card(
     return y - card_h - 0.2 * inch
 
 
-def _draw_coordinates_table(c: canvas.Canvas, y: float, points: List[Tuple[float, float]]) -> float:
+def _draw_coordinates_table(
+    c: canvas.Canvas, y: float, points: List[Tuple[float, float]], title: str = "Coordinates Assessed"
+) -> float:
     if not points:
         return y
 
@@ -320,7 +379,7 @@ def _draw_coordinates_table(c: canvas.Canvas, y: float, points: List[Tuple[float
 
     c.setFillColor(INK_PRIMARY)
     c.setFont("Helvetica-Bold", 10.5)
-    c.drawString(MARGIN, y - 9, "Coordinates Assessed")
+    c.drawString(MARGIN, y - 9, title)
     y -= 20
 
     top = y
@@ -439,7 +498,16 @@ def _draw_footer(c: canvas.Canvas) -> None:
 def generate_pdf_report(
     result: Dict[str, Any],
     points: List[Tuple[float, float]],
+    neighbor_plots: Optional[List[Dict[str, Any]]] = None,
 ) -> io.BytesIO:
+    """
+    neighbor_plots: only passed by the two-plot direct-comparison mode
+    (app.py's "Compare two specific plots"), where the "neighbor" is a
+    real document the user provided, not an anonymous registry entry - so
+    unlike the registry-wide check, its full coordinates belong in the
+    report. Each entry: {"label": str, "points": [(lat, lon), ...], "status": "good"|"warning"|"critical"}.
+    """
+    neighbor_plots = neighbor_plots or []
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=letter)
     risk_level = result["risk_level"]
@@ -448,17 +516,20 @@ def generate_pdf_report(
     y = _draw_risk_badge(c, y, risk_level)
     y = _draw_risk_gauge(c, y, risk_level)
 
-    diagram_left_edge = _draw_plot_diagram(c, y, points)
+    diagram_left_edge = _draw_plot_diagram(c, y, points, neighbor_plots)
     findings_max_x = diagram_left_edge - 0.2 * inch
+    diagram_h = 1.9 * inch + (0.22 * inch if neighbor_plots else 0)
 
     y_findings = _draw_card(
         c, y, "Key Findings", result["findings"], STATUS_COLORS[theme.RISK_TO_STATUS[risk_level]], findings_max_x
     )
-    y = min(y_findings, y - 1.9 * inch - 0.2 * inch)  # clear the diagram box too
+    y = min(y_findings, y - diagram_h - 0.2 * inch)  # clear the diagram box too
 
     y = _draw_card(c, y, "Recommendations", result["recommendations"], STATUS_COLORS["good"], PAGE_WIDTH - MARGIN)
     y = _draw_plots_table(c, y, result)
-    y = _draw_coordinates_table(c, y, points)
+    y = _draw_coordinates_table(c, y, points, title="Your Plot - Coordinates Assessed" if neighbor_plots else "Coordinates Assessed")
+    for neighbor in neighbor_plots:
+        y = _draw_coordinates_table(c, y, neighbor["points"], title=f"{neighbor['label']} - Coordinates Provided")
 
     _draw_footer(c)
     c.showPage()

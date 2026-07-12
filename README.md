@@ -113,6 +113,8 @@ Alongside the standard "check against known plots" flow, a mode selector (top of
 
 Both flows share the same upload/CRS-override machinery (`render_document_input()`, namespaced by a `slot` argument so Plot A/B's session state and widget keys never collide) and the same results rendering (`render_results()`), just pointed at a single ad-hoc neighbor GeoDataFrame instead of `load_neighboring_plots()`. Comparison results skip the shared-registry opt-in and viral-sharing CTA - those are framed around a plot's relationship to the wider registry, which doesn't apply to a one-off direct comparison.
 
+Unlike the standard mode, the neighbor here is a real document the user provided (not an anonymous registry entry), so its full details belong in the PDF too: `generate_pdf_report()`'s optional `neighbor_plots` argument (only populated in compare mode) draws the neighbor's boundary on the *same shared scale* as the user's plot - critical for the diagram to actually show an overlap when one exists, rather than each polygon being independently normalized to fill the box and losing their real relative position - plus its own "Neighboring Plot - Coordinates Provided" table alongside the user's own.
+
 ## Terms of Service & Privacy Policy
 
 The app is gated behind a consent screen (`app.py`, right after the hero) - nothing else renders until a user checks "I have read and agree" and clicks through. `legal/terms.md` and `legal/privacy.md` hold the actual text (loaded via `utils/legal.py`), written around Nigeria's NDPA 2023 (the law that actually governs this app's users) plus GDPR-equivalent language for any EU users. Both are also re-readable anytime via an expander in the footer.
