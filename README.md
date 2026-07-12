@@ -130,6 +130,17 @@ Text OCR and vision extraction can both misread a bearing or distance the same w
 
 Editing a cell re-walks the traverse from the same origin and re-populates the coordinates box immediately - no separate "apply" step, same pattern as the CRS-override re-extraction above it. The walk still has to close within `traverse.py`'s normal tolerance, or the edit is rejected with a warning and the previous boundary is kept, so a bad correction can't silently produce a confidently-wrong shape. The re-projection back to WGS84 after an edit uses a flat-earth (local ENU) approximation anchored on the already-known origin coordinate (`traverse.resolve_recomputed_points()`) rather than re-running the full CRS pipeline - accurate to well under a centimeter at plot-boundary scale, and avoids threading the original EPSG code through every layer just for a one-line edit.
 
+## Design system
+
+`PlotProof Landing (standalone).html` (a self-contained static marketing page - Newsreader serif headings, Work Sans body, warm cream/deep-green/gold editorial palette) is the source of truth for PlotProof's visual identity. Every other surface matches it in two layers, both driven from the same hex values:
+
+- **`utils/theme.py`** - `STATUS`/`ACCENT_LIGHT`/`ACCENT_DARK`/`GOLD`/`INK` constants (hex conversions of the landing page's `oklch()` colors - ReportLab has no oklch support, and one color space keeps the CSS and the PDF from silently drifting apart) plus `get_css()`, a hand-written stylesheet injected via `st.markdown()` that skins PlotProof's own custom markup (`.pp-hero`, `.pp-step`, `.pp-card`, `.pp-badge-risk`, `.pp-cta`, etc.) and a few Streamlit `data-testid` hooks.
+- **`.streamlit/config.toml`'s `[theme]` section** - native Streamlit theming (same hex values again) for everything `get_css()` structurally can't reach: radio buttons, checkboxes, tabs, sliders, native `st.error`/`st.warning`/`st.success`/`st.info` alert boxes, dataframe/`st.data_editor` headers, and every button (including ones without a custom CSS selector, like `pages/admin_review.py`'s form buttons). Without this, those widgets silently fall back to Streamlit's own default theme (a very visible mismatch - default red radio dots, blue `st.info` boxes, square buttons - against the rest of the page). `buttonRadius = "full"` and `baseRadius = "1rem"` give every native widget the landing page's pill/rounded-corner language for free; `font`/`headingFont` load Work Sans/Newsreader directly from Google Fonts via Streamlit's `"<name>:<url>"` config syntax, no custom font-face hosting needed.
+
+Risk-status colors (`STATUS`/`greenColor`/`orangeColor`/`redColor`) are deliberately independent of the brand accent - they were validated for accessibility (colorblind-safe, contrast-checked) separately, and a risk badge should read the same regardless of what the brand's accent color happens to be. `blueColor` (Streamlit's separate "info" semantic, used by `st.info()`) is retuned to `INK["muted"]` rather than left at Streamlit's default blue, which otherwise clashes with everything else on the page.
+
+If the landing page's palette or fonts ever change, update the hex values in both `utils/theme.py` and `.streamlit/config.toml` - they're not derived from each other.
+
 ## PDF report design
 
 `utils/report_generator.py` builds the downloadable report with ReportLab's canvas API, styled to match the web app rather than as plain black-and-white text: a colored header band, a risk badge with the same status icon shapes used on the page, a Low/Medium/High gauge with a pointer, a schematic diagram of the plot boundary (the actual polygon, scaled to fit - or a dashed circle for the buffered-estimate case when fewer than 3 points were given), a conflicting/nearby-plots table, a proper coordinates table, and a footer with real clickable links (WhatsApp/Calendly, via `canvas.linkURL()`). Colors are imported from `utils/theme.py` (`theme.STATUS`, `theme.ACCENT_LIGHT`, `theme.INK`) rather than redefined, so the report never drifts from the app's palette.
@@ -168,6 +179,7 @@ Streamlit's own built-in usage telemetry is disabled via `.streamlit/config.toml
 landSuite/
 ├── app.py                      # thin st.navigation() entrypoint (hides the admin page from any nav)
 ├── app_home.py                 # the actual app - upload, coordinates, risk check, results
+├── PlotProof Landing (standalone).html  # marketing page - source of truth for the design system
 ├── ADMIN_ACCESS.md             # local-only admin URL/password notes (gitignored, not in repo)
 ├── pages/
 │   └── admin_review.py         # password-gated admin portal (API key + extraction review)
@@ -177,7 +189,7 @@ landSuite/
 ├── packages.txt                # apt packages for cloud deploy (tesseract-ocr)
 ├── .env.example
 ├── .streamlit/
-│   └── config.toml             # disables Streamlit's usage telemetry (not a secret - committed)
+│   └── config.toml             # disables usage telemetry + [theme] section (not a secret - committed)
 ├── legal/
 │   ├── terms.md                # Terms of Service
 │   └── privacy.md              # Privacy Policy (NDPA + GDPR)

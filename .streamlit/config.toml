@@ -1,3 +1,37 @@
 [browser]
 # No non-essential telemetry - see legal/privacy.md, Section 6 (Cookies).
 gatherUsageStats = false
+
+[theme]
+# Native Streamlit theming, so widgets outside utils/theme.py's custom CSS
+# reach (radio buttons, tabs, checkboxes, sliders, native st.error/warning/
+# success alerts, dataframe/data_editor headers, sidebar, every button
+# including form submit buttons) match "PlotProof Landing (standalone).html"
+# too, not just the custom .pp-* markup in app_home.py/pages/admin_review.py.
+# Palette here is the same hex values as utils/theme.py's INK/ACCENT/STATUS -
+# keep the two in sync if either changes (utils/theme.py's docstring
+# explains the oklch -> hex source of truth).
+base = "light"
+primaryColor = "#104f29"
+backgroundColor = "#f9f5ec"
+secondaryBackgroundColor = "#fbf8f1"
+textColor = "#25170c"
+borderColor = "#d4cdbf"
+linkColor = "#104f29"
+font = "Work Sans:https://fonts.googleapis.com/css2?family=Work+Sans:wght@400;500;600;700&display=swap, sans-serif"
+headingFont = "Newsreader:https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,500;0,600;1,500&display=swap, serif"
+baseRadius = "1rem"
+buttonRadius = "full"
+# Same hex values as utils/theme.py's STATUS dict - st.error/st.warning/
+# st.success (used throughout for extraction failures, CRS disclaimers,
+# rate-limit messages) render with these instead of Streamlit's defaults.
+greenColor = "#0ca30c"
+orangeColor = "#fab219"
+redColor = "#d03b3b"
+# st.info() (e.g. admin_review.py's "No training examples recorded yet")
+# maps to blueColor, a separate semantic from the red/orange/green risk
+# palette above - default Streamlit blue clashed with the rest of the warm
+# palette, so this reuses INK["muted"] from utils/theme.py instead.
+blueColor = "#845a0f"
+dataframeHeaderBackgroundColor = "#fbf8f1"
+dataframeBorderColor = "#d4cdbf"
