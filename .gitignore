@@ -9,3 +9,4 @@ data/config/
 data/rate_limits/
 .streamlit/secrets.toml
 ADMIN_ACCESS.md
+/product

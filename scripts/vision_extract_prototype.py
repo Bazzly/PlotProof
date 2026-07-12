@@ -25,12 +25,16 @@ def main() -> None:
 
     for arg in sys.argv[1:]:
         print(f"\n{'=' * 70}\n{arg}\n{'=' * 70}")
-        points, crs_note, raw_summary = vision_extract.extract_points_from_image(arg)
+        points, crs_note, raw_summary, legs_info = vision_extract.extract_points_from_image(arg)
         print(raw_summary)
         print(f"\ncrs_note: {crs_note}")
         print(f"points ({len(points)}):")
         for lat, lon in points:
             print(f"  {lat:.6f}, {lon:.6f}")
+        if legs_info:
+            print(f"\nlegs ({len(legs_info['rows'])}):")
+            for row in legs_info["rows"]:
+                print(f"  {row['beacon'] or '?'}: {row['bearing_text']} / {row['distance_m']}m")
 
 
 if __name__ == "__main__":

@@ -108,9 +108,23 @@ def _parse_pairs(text: str) -> Tuple[List[Tuple[float, float]], List[Tuple[float
     return known_en, ambiguous
 
 
+def _legs_info(origin_en: Tuple[float, float], legs: List[Tuple[float, float]]) -> dict:
+    """Bundles a traverse's raw legs into the shape app_home.py's editable
+    bearing/distance table expects (see also vision_extract.py, which
+    builds the same shape from vision-read beacon data). No beacon codes
+    are available from plain text extraction, so rows are numbered."""
+    return {
+        "origin_en": origin_en,
+        "rows": [
+            {"beacon": f"Leg {i + 1}", "bearing_text": traverse.format_bearing(bearing), "distance_m": distance}
+            for i, (bearing, distance) in enumerate(legs)
+        ],
+    }
+
+
 def parse_coordinate_text(
     text: str, pdf_path: Optional[str] = None, forced_epsg: Optional[str] = None
-) -> Tuple[List[Tuple[float, float]], Optional[str]]:
+) -> Tuple[List[Tuple[float, float]], Optional[str], Optional[dict]]:
     """
     Extract (lat, lon) pairs from free-form text, one or more per line.
     Handles both WGS84 decimal-degree pairs ("6.5244, 3.3792") and
@@ -128,11 +142,18 @@ def parse_coordinate_text(
     alone and someone who knows their plan's real CRS should be able to
     just say so.
 
-    Returns (points, crs_note):
+    Returns (points, crs_note, legs_info):
       - crs_note is None if input was already WGS84 degrees.
       - crs_note is "EPSG:xxxx (Name)" if a projected CRS was detected and converted.
       - crs_note is "undetected" if projected-looking numbers couldn't be matched
         to a known CRS (those pairs are dropped rather than guessed at).
+      - legs_info is the raw bearing/distance traverse (see _legs_info()
+        above) when text-based reconstruction was attempted, else None -
+        text extraction can misread a digit the same way OCR/vision can,
+        so the caller (app_home.py) surfaces this for the user to review
+        and correct rather than trusting it silently. Never set for the
+        vector-drawing method (plan_vectors.py), which reads beacon
+        positions directly and has no bearing/distance to show.
     """
     known_en, ambiguous = _parse_pairs(text)
 
@@ -143,7 +164,7 @@ def parse_coordinate_text(
 
     projected_en = known_en + unlabeled_en
     if not projected_en:
-        return [p for p in geographic if is_valid_latlon(*p)], None
+        return [p for p in geographic if is_valid_latlon(*p)], None, None
 
     declared = None if forced_epsg else crs_utils.detect_declared_crs(text)
 
@@ -157,6 +178,7 @@ def parse_coordinate_text(
         origin_en = projected_en[0]
         polygon_en = None
         method = None
+        legs = None
 
         if pdf_path:
             scale_ratio = traverse.parse_scale_ratio(text)
@@ -165,8 +187,14 @@ def parse_coordinate_text(
                 method = "beacon markers in the drawing"
 
         if not polygon_en:
-            polygon_en = traverse.build_polygon_from_text(text, origin_en)
-            method = f"a {len(polygon_en)}-leg traverse" if polygon_en else None
+            legs = traverse.build_legs_from_text(text)
+            if legs:
+                polygon_en = traverse.compute_traverse(origin_en, legs)
+                if polygon_en and not traverse.area_within_tolerance(
+                    traverse.shoelace_area(polygon_en), traverse.parse_area_sqm(text)
+                ):
+                    polygon_en = None
+                method = f"a {len(legs)}-leg traverse"
 
         if polygon_en and len(polygon_en) >= 3:
             converted, crs_note = crs_utils.resolve_to_wgs84(polygon_en, declared=declared, forced_epsg=forced_epsg)
@@ -174,9 +202,19 @@ def parse_coordinate_text(
             if len(valid_points) >= 3:
                 note = f"boundary reconstructed from {method}"
                 crs_note = f"{crs_note}; {note}" if crs_note else note
-                return valid_points, crs_note
+                return valid_points, crs_note, (_legs_info(origin_en, legs) if legs else None)
+
+        # Reconstruction didn't produce a usable polygon (unclosed traverse,
+        # area mismatch, or no method matched at all). Still expose any raw
+        # legs we did parse - even unclosed - so the UI can offer a chance
+        # to fix a misread bearing/distance, rather than silently dropping
+        # to a single-point estimate with no way to recover the real shape.
+        if legs:
+            converted, crs_note = crs_utils.resolve_to_wgs84([origin_en], declared=declared, forced_epsg=forced_epsg)
+            valid_points = [p for p in converted if is_valid_latlon(*p)]
+            return valid_points, crs_note, (_legs_info(origin_en, legs) if valid_points else None)
 
     converted, crs_note = crs_utils.resolve_to_wgs84(projected_en, declared=declared, forced_epsg=forced_epsg)
     points = geographic + converted
     valid_points = [(lat, lon) for lat, lon in points if is_valid_latlon(lat, lon)]
-    return valid_points, crs_note
+    return valid_points, crs_note, None

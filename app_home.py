@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 from streamlit_folium import st_folium
 
 from utils import crs_utils, file_handler, gis_processing, legal, rate_limit, registry, report_generator, risk_calculator, training_data
-from utils import icons, theme, vision_extract
+from utils import icons, theme, traverse, vision_extract
 from utils.coordinates import parse_coordinate_text
 
 load_dotenv()
@@ -203,7 +203,7 @@ def render_document_input(
         )
         if use_vision:
             try:
-                extracted_points, crs_note, extracted_text = vision_extract.extract_points_from_image(
+                extracted_points, crs_note, extracted_text, legs_info = vision_extract.extract_points_from_image(
                     saved_path, forced_epsg=forced_epsg
                 )
                 extraction_method = "vision"
@@ -218,7 +218,9 @@ def render_document_input(
                 # Vector-based boundary reconstruction needs a real local PDF
                 # file to open - not applicable to images or Supabase-hosted uploads.
                 pdf_path = saved_path if file_type == "pdf" and file_handler.storage_backend() == "local" else None
-                extracted_points, crs_note = parse_coordinate_text(extracted_text, pdf_path=pdf_path, forced_epsg=forced_epsg)
+                extracted_points, crs_note, legs_info = parse_coordinate_text(
+                    extracted_text, pdf_path=pdf_path, forced_epsg=forced_epsg
+                )
             except Exception:
                 traceback.print_exc()
                 st.session_state[k("_upload_record")] = None
@@ -228,6 +230,11 @@ def render_document_input(
                 )
                 return
 
+        # A fresh extraction invalidates any bearing/distance edits made
+        # against the *previous* file/CRS - otherwise the legs editor below
+        # would compare new rows against a stale prior edit and silently
+        # skip re-applying them.
+        st.session_state.pop(k("_last_applied_legs"), None)
         st.session_state[k("_upload_record")] = {
             "source_file_ref": saved_path,
             "pdf_path": pdf_path,
@@ -236,6 +243,7 @@ def render_document_input(
             "raw_extracted_text": extracted_text,
             "auto_detected_points": extracted_points,
             "auto_detected_crs_note": crs_note,
+            "legs_info": legs_info,
         }
         if extracted_points:
             st.session_state[k("coords_text")] = "\n".join(f"{lat}, {lon}" for lat, lon in extracted_points)
@@ -314,6 +322,69 @@ def render_document_input(
         st.session_state[k("_last_applied_override")] = selected_crs_label
         extract_and_store(upload_record["source_file_ref"], upload_record["file_type"], forced_epsg=forced_epsg)
 
+    # Re-fetch: extract_and_store() above may have just replaced this.
+    # Rendered before the coordinates box for the same reason as the CRS
+    # override above - editing a row here rewrites coords_text before that
+    # widget is instantiated this run.
+    upload_record = st.session_state.get(k("_upload_record"))
+    legs_info = upload_record.get("legs_info") if upload_record else None
+    if legs_info and legs_info.get("rows") and not disabled:
+        with st.expander("Boundary bearings & distances (auto-read - review before trusting)", expanded=True):
+            st.warning(
+                "These bearing and distance values were read automatically from your file and can "
+                "be wrong, especially on handwritten plans or low-quality photos. Check each line "
+                "against your original document and correct anything that doesn't match. If you're "
+                "not confident reading a bearing or distance yourself, please have a licensed "
+                "surveyor confirm before relying on this for any transaction."
+            )
+            edited_rows = st.data_editor(
+                legs_info["rows"],
+                column_config={
+                    "beacon": st.column_config.TextColumn("Beacon"),
+                    "bearing_text": st.column_config.TextColumn(
+                        "Bearing", help="Whole-circle bearing as printed, e.g. 52°30' or 176°"
+                    ),
+                    "distance_m": st.column_config.NumberColumn("Distance (m)", min_value=0.0, format="%.2f"),
+                },
+                column_order=["beacon", "bearing_text", "distance_m"],
+                hide_index=True,
+                key=k("legs_editor"),
+                disabled=disabled,
+            )
+            if edited_rows != st.session_state.get(k("_last_applied_legs")):
+                st.session_state[k("_last_applied_legs")] = edited_rows
+                new_legs = []
+                all_parsed = True
+                for row in edited_rows:
+                    bearing = traverse.parse_bearing_string(row.get("bearing_text"))
+                    distance = row.get("distance_m")
+                    if bearing is None or distance is None:
+                        all_parsed = False
+                        break
+                    new_legs.append((bearing, distance))
+
+                origin_latlon = upload_record["auto_detected_points"][0] if upload_record.get("auto_detected_points") else None
+                new_points = None
+                if all_parsed and origin_latlon:
+                    new_points = traverse.resolve_recomputed_points(legs_info["origin_en"], origin_latlon, new_legs)
+
+                if new_points and len(new_points) >= 3:
+                    st.session_state[k("coords_text")] = "\n".join(f"{lat}, {lon}" for lat, lon in new_points)
+                    # Keeps resolve_points()'s upload-time-crs_note reuse
+                    # working (see its docstring) - the CRS itself hasn't
+                    # changed, just the boundary shape within it.
+                    upload_record["auto_detected_points"] = new_points
+                elif not all_parsed:
+                    show_warning(
+                        "One or more bearing/distance values couldn't be read - fix the format "
+                        "(e.g. 52°30') to update the boundary."
+                    )
+                else:
+                    show_warning(
+                        "These edits don't form a closed boundary within tolerance - keeping the "
+                        "previous boundary until they do."
+                    )
+
     st.caption("One point per line: latitude, longitude. Add all boundary corners (3+) for an accurate plot outline.")
     coordinates_text = st.text_area(
         "Coordinates",
@@ -337,7 +408,7 @@ def resolve_points(inputs: dict) -> tuple:
     note when the box still holds exactly what was auto-extracted (see the
     comment at the original call site - the box shows converted WGS84
     decimals after upload, which no longer look projected on re-parse)."""
-    points, crs_note = parse_coordinate_text(inputs["coordinates_text"], forced_epsg=inputs["forced_epsg"])
+    points, crs_note, _ = parse_coordinate_text(inputs["coordinates_text"], forced_epsg=inputs["forced_epsg"])
     upload_record = inputs["upload_record"]
     if crs_note is None and upload_record and points == upload_record["auto_detected_points"]:
         crs_note = upload_record["auto_detected_crs_note"]

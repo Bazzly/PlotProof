@@ -24,7 +24,6 @@ fall back to the existing OCR path when it's unset.
 import base64
 import json
 import mimetypes
-import re
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -125,12 +124,6 @@ of the traverse leg from each beacon to the next
 If a value is not visible or you are not confident, use null rather than \
 guessing, and note the issue in extraction_notes."""
 
-# "52°30'", "52°30'00\"", or bare "176°" (no minutes printed) - the vision
-# model transcribes whatever the plan actually shows, which is looser than
-# traverse.py's regex for text-extracted plans (that one requires minutes).
-_BEARING_STR_RE = re.compile(r"(\d{1,3})\s*°\s*(?:(\d{1,2})\s*'\s*)?(?:(\d{1,2})\s*\"?)?")
-
-
 def is_available() -> bool:
     return bool(app_config.get_anthropic_api_key())
 
@@ -159,17 +152,6 @@ def _call_vision_api(image_path: str) -> dict:
     return json.loads(text)
 
 
-def _parse_bearing_string(raw: Optional[str]) -> Optional[float]:
-    if not raw:
-        return None
-    match = _BEARING_STR_RE.search(raw)
-    if not match:
-        return None
-    deg, minute, sec = match.groups()
-    value = int(deg) + (int(minute) / 60 if minute else 0) + (int(sec) / 3600 if sec else 0)
-    return value if 0 <= value <= 360 else None
-
-
 def _summarize(data: dict) -> str:
     """Human-readable transcript for the training-data record and debug
     display - not meant for further regex parsing (unlike raw OCR text,
@@ -191,13 +173,21 @@ def _summarize(data: dict) -> str:
 
 def extract_points_from_image(
     image_path: str, forced_epsg: Optional[str] = None
-) -> Tuple[List[Tuple[float, float]], Optional[str], str]:
+) -> Tuple[List[Tuple[float, float]], Optional[str], str, Optional[dict]]:
     """
-    Returns (points, crs_note, raw_summary) - points/crs_note are in the
-    same shape coordinates.parse_coordinate_text() produces, so callers
-    can treat this as a drop-in alternative extraction path for images.
-    raw_summary is a human-readable transcript, stored for the opt-in
-    training-data record and for debugging, not for re-parsing.
+    Returns (points, crs_note, raw_summary, legs_info) - points/crs_note
+    are in the same shape coordinates.parse_coordinate_text() produces, so
+    callers can treat this as a drop-in alternative extraction path for
+    images. raw_summary is a human-readable transcript, stored for the
+    opt-in training-data record and for debugging, not for re-parsing.
+
+    legs_info carries every beacon's bearing/distance as read by the
+    model, in the same {"origin_en", "rows": [...]} shape
+    coordinates.parse_coordinate_text() produces - even rows the model
+    couldn't confidently read (null bearing/distance) are included, so the
+    UI (see app_home.py's legs editor) can let the user fill in or correct
+    exactly the beacons that need it, not just accept-or-reject the whole
+    file. None only when there's no origin point at all to anchor a table to.
     """
     data = _call_vision_api(image_path)
     raw_summary = _summarize(data)
@@ -205,22 +195,26 @@ def extract_points_from_image(
     origin = data.get("origin_point") or {}
     northing, easting = origin.get("northing"), origin.get("easting")
     if northing is None or easting is None:
-        return [], None, raw_summary
+        return [], None, raw_summary, None
 
     origin_en = (easting, northing)
     declared = None if forced_epsg else crs_utils.detect_declared_crs(data.get("declared_crs_text") or "")
 
+    rows = []
     legs = []
+    legs_complete = True
     for beacon in data.get("beacons") or []:
-        bearing = _parse_bearing_string(beacon.get("bearing_to_next"))
+        bearing_text = beacon.get("bearing_to_next")
+        bearing_deg = traverse.parse_bearing_string(bearing_text)
         distance = beacon.get("distance_to_next_m")
-        if bearing is None or distance is None:
-            legs = []
-            break
-        legs.append((bearing, distance))
+        rows.append({"beacon": beacon.get("code") or None, "bearing_text": bearing_text or "", "distance_m": distance})
+        if bearing_deg is None or distance is None:
+            legs_complete = False
+        else:
+            legs.append((bearing_deg, distance))
 
     polygon_en = None
-    if len(legs) >= 3:
+    if legs_complete and len(legs) >= 3:
         polygon_en = traverse.compute_traverse(origin_en, legs)
         if polygon_en and not traverse.area_within_tolerance(traverse.shoelace_area(polygon_en), data.get("area_sqm")):
             polygon_en = None
@@ -228,6 +222,8 @@ def extract_points_from_image(
     points_en = polygon_en if polygon_en and len(polygon_en) >= 3 else [origin_en]
     converted, crs_note = crs_utils.resolve_to_wgs84(points_en, declared=declared, forced_epsg=forced_epsg)
     valid_points = [(lat, lon) for lat, lon in converted if -90 <= lat <= 90 and -180 <= lon <= 180]
+
+    legs_info = {"origin_en": origin_en, "rows": rows} if rows and valid_points else None
 
     if valid_points:
         note = (
@@ -237,4 +233,4 @@ def extract_points_from_image(
         )
         crs_note = f"{crs_note}; {note}" if crs_note else note
 
-    return valid_points, crs_note, raw_summary
+    return valid_points, crs_note, raw_summary, legs_info
