@@ -77,3 +77,25 @@ def record_example(
 
     dest = TRAINING_DATA_DIR / f"{record['id']}.json"
     dest.write_text(json.dumps(record, indent=2))
+
+
+def list_examples() -> List[dict]:
+    """All opt-in examples collected so far, newest first - used by the
+    admin review portal (pages/admin_review.py) to surface real-world
+    extraction failures like a document that returned zero auto-detected
+    points despite being legible, or one a user had to heavily correct."""
+    if _storage_backend() == "supabase":
+        from supabase import create_client
+
+        client = create_client(_SUPABASE_URL, _SUPABASE_KEY)
+        response = client.table("training_examples").select("*").order("timestamp", desc=True).execute()
+        return response.data
+
+    records = []
+    for path in TRAINING_DATA_DIR.glob("*.json"):
+        try:
+            records.append(json.loads(path.read_text()))
+        except (json.JSONDecodeError, OSError):
+            continue
+    records.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
+    return records

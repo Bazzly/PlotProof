@@ -15,8 +15,8 @@ import streamlit as st
 from dotenv import load_dotenv
 from streamlit_folium import st_folium
 
-from utils import crs_utils, file_handler, gis_processing, legal, registry, report_generator, risk_calculator, training_data
-from utils import icons, theme
+from utils import crs_utils, file_handler, gis_processing, legal, rate_limit, registry, report_generator, risk_calculator, training_data
+from utils import icons, theme, vision_extract
 from utils.coordinates import parse_coordinate_text
 
 load_dotenv()
@@ -25,6 +25,15 @@ WHATSAPP_LINK = os.environ.get("WHATSAPP_LINK", "https://chat.whatsapp.com/KrMfF
 CALENDLY_LINK = os.environ.get("CALENDLY_LINK", "https://calendly.com/bazeet4love")
 APP_URL = os.environ.get("APP_URL", "https://plotproof.streamlit.app")
 TWITTER_LINK = os.environ.get("TWITTER_LINK", "https://x.com/bazzlycodes")
+
+# Daily per-client caps and burst protection - see utils/rate_limit.py.
+# "Checks" (Analyze/Compare) are the core paid-adjacent action a user takes;
+# vision extraction gets its own, slightly more generous cap since a normal
+# single real check can involve a re-upload or a CRS-override re-extraction.
+DAILY_CHECK_LIMIT = int(os.environ.get("DAILY_CHECK_LIMIT", "3"))
+DAILY_VISION_LIMIT = int(os.environ.get("DAILY_VISION_LIMIT", "5"))
+BURST_MAX_REQUESTS = int(os.environ.get("BURST_MAX_REQUESTS", "10"))
+BURST_WINDOW_SECONDS = int(os.environ.get("BURST_WINDOW_SECONDS", "60"))
 
 
 def show_error(message: str) -> None:
@@ -55,6 +64,25 @@ def show_crs_disclaimer() -> None:
         f"[@PlotProof]({TWITTER_LINK}) before relying on this result for any transaction or "
         "legal decision."
     )
+
+
+def check_can_run_check() -> bool:
+    """Gate for the core "Analyze My Land" / "Compare Plots" action - the
+    literal per-visitor daily cap, plus a burst check so rapid repeated
+    clicks can't be used to hammer the server. Shows its own error and
+    returns False when blocked; callers should skip the analysis entirely
+    in that case."""
+    if not rate_limit.check_burst_limit(CLIENT_ID, BURST_MAX_REQUESTS, BURST_WINDOW_SECONDS):
+        show_error("Too many requests in a short time. Please wait a minute and try again.")
+        return False
+    allowed, _ = rate_limit.check_daily_limit(CLIENT_ID, "analyze", DAILY_CHECK_LIMIT)
+    if not allowed:
+        show_error(
+            f"You've reached today's limit of {DAILY_CHECK_LIMIT} land checks per day. "
+            "Please try again tomorrow."
+        )
+        return False
+    return True
 
 
 st.set_page_config(page_title="PlotProof - Check Your Land Risk", page_icon="assets/logo.svg", layout="centered")
@@ -104,6 +132,10 @@ if not st.session_state.get("_consent_accepted"):
         st.rerun()
     st.stop()
 
+# Resolved once per script run - identifies this visitor for the daily
+# check/extraction caps and burst limiter below (see utils/rate_limit.py).
+CLIENT_ID = rate_limit.get_client_id()
+
 
 def step_header(number: int, label: str) -> None:
     st.markdown(
@@ -148,20 +180,53 @@ def render_document_input(
         internals, OCR), so failures here must degrade to manual entry
         rather than crash the app - the full exception is logged
         server-side either way."""
-        try:
-            extracted_text, extraction_method = file_handler.extract_text_from_file(saved_path)
-            # Vector-based boundary reconstruction needs a real local PDF
-            # file to open - not applicable to images or Supabase-hosted uploads.
-            pdf_path = saved_path if file_type == "pdf" and file_handler.storage_backend() == "local" else None
-            extracted_points, crs_note = parse_coordinate_text(extracted_text, pdf_path=pdf_path, forced_epsg=forced_epsg)
-        except Exception:
-            traceback.print_exc()
-            st.session_state[k("_upload_record")] = None
-            show_error(
-                "Something went wrong reading this file automatically. The technical details "
-                "were logged for review - in the meantime, please enter coordinates manually below."
-            )
-            return
+        # Phone photos of survey plans mix horizontal, vertical, and
+        # diagonally-angled text that Tesseract's single-block OCR mode
+        # reliably mangles (confirmed against real user uploads that OCR
+        # read as zero coordinates despite being legible to the eye) -
+        # Claude's vision reads these correctly, so prefer it for images
+        # when an API key is configured. PDFs already extract well via a
+        # real text layer or page-rasterized OCR, so this path is
+        # image-only, and a vision-call failure (rate limit, API error)
+        # falls back to OCR rather than dropping straight to manual entry.
+        # Also gated behind its own daily cap + burst limiter, since this
+        # is the one call in the app with a real per-request $ cost - a
+        # visitor who hits either limit silently falls back to free OCR
+        # rather than being blocked outright (re-uploads/CRS-override
+        # re-tries within one real session are normal, so this shouldn't
+        # feel like a wall for a legitimate user).
+        use_vision = (
+            file_type in ("png", "jpg", "jpeg")
+            and vision_extract.is_available()
+            and rate_limit.check_burst_limit(CLIENT_ID, BURST_MAX_REQUESTS, BURST_WINDOW_SECONDS)
+            and rate_limit.check_daily_limit(CLIENT_ID, "vision_extract", DAILY_VISION_LIMIT)[0]
+        )
+        if use_vision:
+            try:
+                extracted_points, crs_note, extracted_text = vision_extract.extract_points_from_image(
+                    saved_path, forced_epsg=forced_epsg
+                )
+                extraction_method = "vision"
+                pdf_path = None
+            except Exception:
+                traceback.print_exc()
+                use_vision = False
+
+        if not use_vision:
+            try:
+                extracted_text, extraction_method = file_handler.extract_text_from_file(saved_path)
+                # Vector-based boundary reconstruction needs a real local PDF
+                # file to open - not applicable to images or Supabase-hosted uploads.
+                pdf_path = saved_path if file_type == "pdf" and file_handler.storage_backend() == "local" else None
+                extracted_points, crs_note = parse_coordinate_text(extracted_text, pdf_path=pdf_path, forced_epsg=forced_epsg)
+            except Exception:
+                traceback.print_exc()
+                st.session_state[k("_upload_record")] = None
+                show_error(
+                    "Something went wrong reading this file automatically. The technical details "
+                    "were logged for review - in the meantime, please enter coordinates manually below."
+                )
+                return
 
         st.session_state[k("_upload_record")] = {
             "source_file_ref": saved_path,
@@ -514,6 +579,8 @@ if mode == "Check my land against known plots":
                 )
             else:
                 show_error("Please upload a file or enter at least one coordinate.")
+        elif not check_can_run_check():
+            pass
         else:
             with st.spinner("Analyzing your land boundaries..."):
                 neighbors_gdf = _load_neighbors()
@@ -585,6 +652,8 @@ else:
         points_b, crs_note_b = resolve_points(inputs_b)
         if not points_a or not points_b:
             show_error("Please provide valid coordinates for both your plot and the neighboring plot.")
+        elif not check_can_run_check():
+            pass
         else:
             with st.spinner("Comparing the two plots..."):
                 user_gdf = gis_processing.build_user_plot_gdf(points_a)

@@ -61,8 +61,10 @@ git push -u origin main
    CALENDLY_LINK = "https://calendly.com/bazeet4love"
    APP_URL = "https://plotproof.streamlit.app"
    PRIVACY_CONTACT_EMAIL = ""
+   ANTHROPIC_API_KEY = ""
+   ADMIN_PASSWORD = ""
    ```
-   Streamlit Cloud exposes these as environment variables at runtime - no code changes needed. Leave `SUPABASE_URL`/`SUPABASE_KEY` blank to keep using local disk storage. **Set `PRIVACY_CONTACT_EMAIL` before directing real users here** - without it, the Privacy Policy honestly (but unprofessionally) says no contact address is configured yet.
+   Streamlit Cloud exposes these as environment variables at runtime - no code changes needed. Leave `SUPABASE_URL`/`SUPABASE_KEY` blank to keep using local disk storage. **Set `PRIVACY_CONTACT_EMAIL` before directing real users here** - without it, the Privacy Policy honestly (but unprofessionally) says no contact address is configured yet. Leave `ANTHROPIC_API_KEY` blank to keep image extraction on the free OCR path instead of vision (see below); leave `ADMIN_PASSWORD` blank to keep the admin review portal disabled.
 5. Click **Deploy**. First build takes a few minutes (installs GeoPandas/Shapely/tesseract).
 
 You'll get a live URL like `https://plotproof.streamlit.app`.
@@ -90,6 +92,32 @@ Most users photograph their survey plan with a phone rather than upload a clean 
 This materially improves but doesn't guarantee OCR accuracy on a genuinely degraded photo - that's why `utils/coordinates.py`'s number regex requires digit runs to be bounded by non-digit characters on both sides (`(?<!\d)...(?!\d)`), so a garbled run like `750630892` (missing its decimal point) is dropped entirely rather than greedily prefix-matched into a wrong-but-plausible-looking number (confirmed directly: this exact failure mode produced a coordinate 60+ degrees of latitude off before the fix). Losing an unparseable point is recoverable - the user sees "found N of however-many-expected points" and can add it manually; silently returning a wrong one isn't.
 
 When a user checks **"Help improve coordinate extraction"** before analyzing an uploaded file, `utils/training_data.py` saves the document's extracted text, what was auto-detected, and what the user actually confirmed/corrected - opt-in only, never collected silently. This is meant as labeled data (input → ground truth) for eventually training or fine-tuning a real extraction model instead of hand-patching regexes for every new format. Records land in `data/training_examples/*.json` locally, or in a `training_examples` table in Supabase once `SUPABASE_URL`/`SUPABASE_KEY` are set (see the schema documented at the top of `utils/training_data.py` - create that table yourself before switching over). Both locations can contain personal property/owner details from uploaded plans, so they're gitignored and shouldn't be shared outside your own review.
+
+### Vision-based extraction for photos
+
+Even with the OCR preprocessing above, Tesseract's `--psm 6` mode assumes one uniform horizontal text block - a real assumption survey plan photos routinely violate: a horizontal header, origin coordinates printed vertically along a margin, and bearing labels angled diagonally along each boundary line. Confirmed against two real user-submitted photos (one printed, one hand-drawn) that both OCR'd to **zero** detected coordinates despite being clearly legible by eye.
+
+`utils/vision_extract.py` sends the image directly to Claude (`claude-opus-4-8`, vision + structured JSON output) instead, asking it to read the owner name, declared CRS text, origin coordinate, and every beacon's bearing/distance to the next - the same fields `utils/traverse.py` needs to reconstruct the boundary, so the result flows through the existing CRS-resolution and traverse/closure-validation logic unchanged. Both test photos extracted correctly (all 9 beacons on the printed plan; origin + partial traverse on the hand-drawn one, with low-confidence bearings honestly flagged rather than guessed).
+
+This only runs for image uploads (PDFs already extract well without it) and only when `ANTHROPIC_API_KEY` is set - without it, images fall back to the OCR path above unchanged. It's a real per-call cost (roughly $0.05-0.08/image on Opus 4.8 at 2026 pricing) and adds noticeable latency (~10-25s), so it's a deliberate step up from free local OCR, not a silent swap. A vision-call failure (rate limit, API error) also falls back to OCR rather than dropping straight to manual entry. `scripts/vision_extract_prototype.py` is a standalone CLI for testing this module directly against a photo without going through the app.
+
+## Admin portal
+
+`pages/admin_review.py` (Streamlit auto-discovers anything under `pages/` and adds it to the sidebar nav as "admin review") has two tabs:
+
+- **API Key** - view (masked) and rotate the Anthropic API key at runtime, via `utils/app_config.py`. This repo is public, so the key can never be committed; a key set here overrides the `ANTHROPIC_API_KEY` env var immediately for every future request, no redeploy or Streamlit Cloud secrets-panel access needed. Storage mirrors the rest of the app (local JSON by default, a Supabase `app_config` table if configured - schema at the top of that file) - either way it holds a live secret, so the local file is gitignored and a Supabase-backed deployment should restrict the table with RLS. Use "Clear admin override" to fall back to the env var again (e.g. after rotating it there instead).
+- **Extraction Review** - browses every opt-in record `utils/training_data.py` has collected: source image thumbnail, the raw extracted text or vision summary, auto-detected CRS note, and auto-detected vs. user-confirmed points side by side. Exists to give visibility into real-world extraction failures (a document that returned zero points despite being legible, or one a user had to significantly correct) rather than only finding out about them anecdotally. Filter by extraction method, "failures only" (zero auto-detected points), or "corrected only" to jump straight to the cases worth looking at.
+
+Gated behind `ADMIN_PASSWORD` (env var) - the whole page refuses to render at all, even the password prompt, if that's unset, so it can't be accidentally left open with no gate. It's not linked from the main app; reachable only via the sidebar nav or a direct URL.
+
+## Rate limiting & abuse protection
+
+Because this repo (and its `ANTHROPIC_API_KEY`) is public, and vision extraction has a real per-call cost, `utils/rate_limit.py` enforces two independent layers on every "Analyze My Land"/"Compare Plots" click and every vision-extraction attempt:
+
+- **Daily per-visitor caps** - `DAILY_CHECK_LIMIT` (default 3) on the core "run a check" action, `DAILY_VISION_LIMIT` (default 5, slightly more generous since a normal single real check can involve a re-upload or a CRS-override re-extraction) on the vision API call specifically. Persisted the same way as the rest of the app's data (local JSON by default, a Supabase `rate_limit_usage` table if configured), so it survives restarts within the same day and can't be bypassed by just reloading the page. Hitting the check cap shows an error and blocks the action; hitting the vision cap silently falls back to free OCR instead of blocking outright.
+- **Burst limiter** - `BURST_MAX_REQUESTS` per `BURST_WINDOW_SECONDS` (default 10 per 60s), in-memory only, to blunt rapid automated hammering within a day's allowance. Resets on process restart and doesn't share state across multiple app instances - a reasonable single-instance DoS mitigation for this app's expected deployment (Streamlit Community Cloud), not a substitute for an edge/WAF rate limiter behind a load balancer.
+
+A visitor is identified (`rate_limit.get_client_id()`) by the `X-Forwarded-For` header first (the real client IP behind Streamlit Cloud's proxy), falling back to `st.context.ip_address`, falling back to a random per-browser-session ID as a last resort (weak - a new session gets a fresh allowance - but this only matters in local dev, where loopback requests have no usable IP). All four limits are configurable via env var - see `.env.example`.
 
 ## Polygon reconstruction
 
@@ -132,6 +160,10 @@ Streamlit's own built-in usage telemetry is disabled via `.streamlit/config.toml
 ```
 landSuite/
 ├── app.py                      # Streamlit app
+├── pages/
+│   └── admin_review.py         # password-gated extraction-review portal
+├── scripts/
+│   └── vision_extract_prototype.py  # standalone CLI for testing vision extraction
 ├── requirements.txt
 ├── packages.txt                # apt packages for cloud deploy (tesseract-ocr)
 ├── .env.example
@@ -146,6 +178,9 @@ landSuite/
 │   ├── traverse.py             # text-based bearing/distance boundary reconstruction
 │   ├── plan_vectors.py         # vector-drawing-based boundary reconstruction (higher confidence)
 │   ├── file_handler.py         # upload storage + PDF/image text & OCR extraction
+│   ├── vision_extract.py       # Claude-vision-based extraction for photographed plans
+│   ├── app_config.py           # admin-editable runtime config (Anthropic API key)
+│   ├── rate_limit.py           # per-visitor daily caps + burst limiter
 │   ├── gis_processing.py       # GeoPandas overlap/proximity analysis
 │   ├── risk_calculator.py      # risk scoring from GIS results
 │   ├── report_generator.py     # PDF report generation
@@ -156,6 +191,8 @@ landSuite/
 │   ├── sample_data/            # synthetic neighboring-plot data for demo/testing
 │   ├── uploads/                # local upload storage (until Supabase is configured)
 │   ├── registry/               # opt-in shared registry plots (gitignored)
-│   └── training_examples/      # opt-in labeled extraction examples (gitignored)
+│   ├── training_examples/      # opt-in labeled extraction examples (gitignored)
+│   ├── config/                 # admin-set runtime config, e.g. rotated API key (gitignored)
+│   └── rate_limits/            # daily per-visitor usage counters (gitignored)
 └── doc/                        # product spec, architecture notes, planning docs
 ```

@@ -5,4 +5,6 @@ __pycache__/
 data/uploads/
 data/training_examples/
 data/registry/
+data/config/
+data/rate_limits/
 .streamlit/secrets.toml
