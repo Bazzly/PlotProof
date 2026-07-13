@@ -4,6 +4,7 @@ Built by Alli Bazeet (@bazzlycodes)
 """
 
 import os
+import re
 import traceback
 import urllib.parse
 from datetime import date
@@ -12,6 +13,7 @@ from typing import Optional
 import folium
 import geopandas as gpd
 import streamlit as st
+import streamlit_sortables
 from dotenv import load_dotenv
 from streamlit_folium import st_folium
 
@@ -63,6 +65,27 @@ def show_crs_disclaimer() -> None:
         f"\"Coordinate system\" selector, or have it confirmed by us at "
         f"[@PlotProof]({TWITTER_LINK}) before relying on this result for any transaction or "
         "legal decision."
+    )
+
+
+def traverse_order_uncertain(crs_note: Optional[str]) -> bool:
+    """True when traverse.check_traverse_convention() flagged this
+    extraction - a wrong starting beacon or traverse direction doesn't
+    corrupt any individual bearing/distance value, so it's a second,
+    independent source of uncertainty from crs_is_uncertain() above,
+    checked the same way (a marker substring in the same crs_note)."""
+    return bool(crs_note) and "double-check the beacon order" in crs_note
+
+
+def show_traverse_order_disclaimer() -> None:
+    st.warning(
+        "This boundary's beacon order or direction doesn't match the standard survey convention "
+        "(starting at the northernmost beacon, proceeding clockwise). It could be a legitimate "
+        "exception, or the beacons may have been read in the wrong order or direction, which "
+        "would produce a rotated or mirrored shape without changing any individual bearing or "
+        "distance value. Please check the beacon order in the table below against your original "
+        f"document, or have it confirmed by us at [@PlotProof]({TWITTER_LINK}) before relying on "
+        "this result for any transaction or legal decision."
     )
 
 
@@ -253,6 +276,8 @@ def render_document_input(
             st.success(f"{msg} Review below.")
             if crs_is_uncertain(crs_note):
                 show_crs_disclaimer()
+            if traverse_order_uncertain(crs_note):
+                show_traverse_order_disclaimer()
         elif crs_note == "undetected":
             show_warning(
                 "Found projected coordinates in this file but couldn't confidently match them "
@@ -330,6 +355,12 @@ def render_document_input(
     legs_info = upload_record.get("legs_info") if upload_record else None
     if legs_info and legs_info.get("rows") and not disabled:
         with st.expander("Boundary bearings & distances (auto-read - review before trusting)", expanded=True):
+            origin_lat, origin_lon = legs_info["origin_latlon"]
+            st.markdown(
+                f"**Origin point (PL1)** - every other point below is calculated from this one: "
+                f"`{legs_info['origin_label']}` → `{origin_lat:.6f}, {origin_lon:.6f}` "
+                f"(also always the first line in the coordinates box below)."
+            )
             st.warning(
                 "These bearing and distance values were read automatically from your file and can "
                 "be wrong, especially on handwritten plans or low-quality photos. Check each line "
@@ -340,7 +371,7 @@ def render_document_input(
             edited_rows = st.data_editor(
                 legs_info["rows"],
                 column_config={
-                    "beacon": st.column_config.TextColumn("Beacon"),
+                    "beacon": st.column_config.TextColumn("Line", help="The boundary line this bearing/distance describes"),
                     "bearing_text": st.column_config.TextColumn(
                         "Bearing", help="Whole-circle bearing as printed, e.g. 52°30' or 176°"
                     ),
@@ -351,11 +382,46 @@ def render_document_input(
                 key=k("legs_editor"),
                 disabled=disabled,
             )
-            if edited_rows != st.session_state.get(k("_last_applied_legs")):
-                st.session_state[k("_last_applied_legs")] = edited_rows
+
+            # Separate from value editing above - covers the case where
+            # every individual bearing/distance was read correctly but in
+            # the wrong sequence (confirmed real case: a plan's actual
+            # first leg was read further down the list). st_sortables only
+            # takes list[str], so each row becomes one descriptive,
+            # uniquely-numbered line; dragging returns the same strings
+            # reordered, which we map back to row dicts by that number.
+            final_rows = edited_rows
+            if len(edited_rows) > 1 and not disabled:
+                st.caption(
+                    "Values correct but in the wrong order (e.g. the plan's real first leg turns "
+                    "out to be further down)? Drag to rearrange:"
+                )
+                item_labels = [
+                    f"{i + 1}. {row.get('beacon') or '?'}  —  {row.get('bearing_text') or '?'}  —  "
+                    f"{row.get('distance_m')}m"
+                    for i, row in enumerate(edited_rows)
+                ]
+                sorted_labels = streamlit_sortables.sort_items(item_labels, direction="vertical", key=k("legs_order"))
+                if sorted_labels != item_labels:
+                    order = [item_labels.index(label) for label in sorted_labels]
+                    final_rows = [edited_rows[i] for i in order]
+                    # Auto-generated "PL1 -> PL2" labels describe a
+                    # position in the walk, not a specific physical
+                    # beacon, so relabel them to match the new order. Real
+                    # beacon codes (read off the plan) travel with their
+                    # row untouched instead - those describe an actual
+                    # physical line regardless of where it falls in the walk.
+                    if all(re.fullmatch(r"PL\d+ → PL\d+", row.get("beacon") or "") for row in final_rows):
+                        n = len(final_rows)
+                        final_rows = [
+                            {**row, "beacon": f"PL{i + 1} → PL{(i + 1) % n + 1}"} for i, row in enumerate(final_rows)
+                        ]
+
+            if final_rows != st.session_state.get(k("_last_applied_legs")):
+                st.session_state[k("_last_applied_legs")] = final_rows
                 new_legs = []
                 all_parsed = True
-                for row in edited_rows:
+                for row in final_rows:
                     bearing = traverse.parse_bearing_string(row.get("bearing_text"))
                     distance = row.get("distance_m")
                     if bearing is None or distance is None:
@@ -364,9 +430,11 @@ def render_document_input(
                     new_legs.append((bearing, distance))
 
                 origin_latlon = upload_record["auto_detected_points"][0] if upload_record.get("auto_detected_points") else None
-                new_points = None
-                if all_parsed and origin_latlon:
-                    new_points = traverse.resolve_recomputed_points(legs_info["origin_en"], origin_latlon, new_legs)
+                new_points, closed = None, False
+                if all_parsed and origin_latlon and len(new_legs) >= 3:
+                    new_points, closed = traverse.resolve_recomputed_points(
+                        legs_info["origin_en"], origin_latlon, new_legs
+                    )
 
                 if new_points and len(new_points) >= 3:
                     st.session_state[k("coords_text")] = "\n".join(f"{lat}, {lon}" for lat, lon in new_points)
@@ -374,16 +442,19 @@ def render_document_input(
                     # working (see its docstring) - the CRS itself hasn't
                     # changed, just the boundary shape within it.
                     upload_record["auto_detected_points"] = new_points
+                    if not closed:
+                        show_warning(
+                            "Updated the boundary from your edits, but it doesn't fully close - common "
+                            "on older or hand-surveyed plans. The shape shown is approximate; consider "
+                            "having a licensed surveyor confirm it before relying on this for a transaction."
+                        )
                 elif not all_parsed:
                     show_warning(
                         "One or more bearing/distance values couldn't be read - fix the format "
                         "(e.g. 52°30') to update the boundary."
                     )
                 else:
-                    show_warning(
-                        "These edits don't form a closed boundary within tolerance - keeping the "
-                        "previous boundary until they do."
-                    )
+                    show_warning("At least 3 boundary legs are needed to build a shape.")
 
     st.caption("One point per line: latitude, longitude. Add all boundary corners (3+) for an accurate plot outline.")
     coordinates_text = st.text_area(
@@ -442,6 +513,8 @@ def render_results(
         )
         if crs_is_uncertain(crs_note):
             show_crs_disclaimer()
+        if traverse_order_uncertain(crs_note):
+            show_traverse_order_disclaimer()
 
     step_header(step_num, "Risk Assessment")
     risk_level = result["risk_level"]

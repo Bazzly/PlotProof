@@ -108,15 +108,33 @@ def _parse_pairs(text: str) -> Tuple[List[Tuple[float, float]], List[Tuple[float
     return known_en, ambiguous
 
 
-def _legs_info(origin_en: Tuple[float, float], legs: List[Tuple[float, float]]) -> dict:
+def _legs_info(
+    origin_en: Tuple[float, float], origin_latlon: Tuple[float, float], legs: List[Tuple[float, float]]
+) -> dict:
     """Bundles a traverse's raw legs into the shape app_home.py's editable
     bearing/distance table expects (see also vision_extract.py, which
     builds the same shape from vision-read beacon data). No beacon codes
-    are available from plain text extraction, so rows are numbered."""
+    are available from plain text extraction, so points get the "PL1",
+    "PL2", ... convention old plans without printed beacon numbers use;
+    each row is labeled as the *line* between two points ("PL1 -> PL2"),
+    wrapping back to PL1 on the closing leg, since that's what a bearing
+    and distance actually describe. origin_en/origin_latlon are surfaced
+    separately - always vertex 0 of the resulting boundary and what every
+    other point is calculated from, so the UI can show it distinctly
+    above the leg table rather than leaving it as just the first,
+    unlabeled line of the coordinates box."""
+    n = len(legs)
+    easting, northing = origin_en
     return {
         "origin_en": origin_en,
+        "origin_label": f"{easting:.3f}mE / {northing:.3f}mN",
+        "origin_latlon": origin_latlon,
         "rows": [
-            {"beacon": f"Leg {i + 1}", "bearing_text": traverse.format_bearing(bearing), "distance_m": distance}
+            {
+                "beacon": f"PL{i + 1} → PL{(i + 1) % n + 1}",
+                "bearing_text": traverse.format_bearing(bearing),
+                "distance_m": distance,
+            }
             for i, (bearing, distance) in enumerate(legs)
         ],
     }
@@ -197,22 +215,59 @@ def parse_coordinate_text(
                 method = f"a {len(legs)}-leg traverse"
 
         if polygon_en and len(polygon_en) >= 3:
+            # A wrong starting beacon or traverse direction doesn't corrupt
+            # any individual bearing/distance value, so nothing above would
+            # catch it - check separately against the standard north-start,
+            # clockwise convention before this goes into a note the user sees.
+            convention_issue = traverse.check_traverse_convention(polygon_en)
             converted, crs_note = crs_utils.resolve_to_wgs84(polygon_en, declared=declared, forced_epsg=forced_epsg)
             valid_points = [p for p in converted if is_valid_latlon(*p)]
             if len(valid_points) >= 3:
                 note = f"boundary reconstructed from {method}"
+                if convention_issue:
+                    note += (
+                        f"; this traverse {convention_issue} - the standard convention starts at "
+                        "the northernmost beacon and goes clockwise, so double-check the beacon "
+                        "order and starting point below against your original document"
+                    )
                 crs_note = f"{crs_note}; {note}" if crs_note else note
-                return valid_points, crs_note, (_legs_info(origin_en, legs) if legs else None)
+                return valid_points, crs_note, (_legs_info(origin_en, valid_points[0], legs) if legs else None)
 
-        # Reconstruction didn't produce a usable polygon (unclosed traverse,
-        # area mismatch, or no method matched at all). Still expose any raw
-        # legs we did parse - even unclosed - so the UI can offer a chance
-        # to fix a misread bearing/distance, rather than silently dropping
-        # to a single-point estimate with no way to recover the real shape.
+        # Strict reconstruction failed (didn't close, or area mismatch) -
+        # for old or hand-surveyed plans this is common even when every
+        # bearing and distance was read correctly, since decades-old
+        # measurements drift. Deduce the boundary anyway from the raw legs
+        # rather than collapsing to a single point - openly flagged as
+        # approximate, so there's a real shape to check against the
+        # original document instead of nothing at all.
+        if legs and len(legs) >= 3:
+            open_polygon_en, closure_error = traverse.build_open_polygon(origin_en, legs)
+            if open_polygon_en:
+                convention_issue = traverse.check_traverse_convention(open_polygon_en)
+                converted, crs_note = crs_utils.resolve_to_wgs84(open_polygon_en, declared=declared, forced_epsg=forced_epsg)
+                valid_points = [p for p in converted if is_valid_latlon(*p)]
+                if len(valid_points) >= 3:
+                    note = (
+                        f"approximate boundary from a {len(legs)}-leg traverse - doesn't fully close "
+                        f"(~{closure_error:.1f}m gap), review the bearings/distances below"
+                    )
+                    if convention_issue:
+                        note += (
+                            f"; also, this traverse {convention_issue} - the standard convention "
+                            "starts at the northernmost beacon and goes clockwise, so double-check "
+                            "the beacon order and starting point too"
+                        )
+                    crs_note = f"{crs_note}; {note}" if crs_note else note
+                    return valid_points, crs_note, _legs_info(origin_en, valid_points[0], legs)
+
+        # Not even an open shape was possible (fewer than 3 legs). Still
+        # expose any raw legs we did parse so the UI can offer a chance to
+        # fix a misread bearing/distance, rather than silently dropping to
+        # a single-point estimate with no way to recover the real shape.
         if legs:
             converted, crs_note = crs_utils.resolve_to_wgs84([origin_en], declared=declared, forced_epsg=forced_epsg)
             valid_points = [p for p in converted if is_valid_latlon(*p)]
-            return valid_points, crs_note, (_legs_info(origin_en, legs) if valid_points else None)
+            return valid_points, crs_note, (_legs_info(origin_en, valid_points[0], legs) if valid_points else None)
 
     converted, crs_note = crs_utils.resolve_to_wgs84(projected_en, declared=declared, forced_epsg=forced_epsg)
     points = geographic + converted

@@ -63,14 +63,22 @@ def parse_scale_ratio(text: str) -> Optional[float]:
     return float(match.group(1).replace(",", ""))
 
 
-def shoelace_area(vertices: List[Tuple[float, float]]) -> float:
+def signed_area(vertices: List[Tuple[float, float]]) -> float:
+    """Shoelace area WITHOUT taking the absolute value - positive when the
+    vertices wind counter-clockwise in standard map orientation (easting
+    as x, northing as y - north up, east right), negative when clockwise.
+    Same magnitude as shoelace_area()."""
     n = len(vertices)
     total = 0.0
     for i in range(n):
         x1, y1 = vertices[i]
         x2, y2 = vertices[(i + 1) % n]
         total += x1 * y2 - x2 * y1
-    return abs(total) / 2
+    return total / 2
+
+
+def shoelace_area(vertices: List[Tuple[float, float]]) -> float:
+    return abs(signed_area(vertices))
 
 
 def area_within_tolerance(computed_area: float, printed_area: Optional[float]) -> bool:
@@ -79,6 +87,48 @@ def area_within_tolerance(computed_area: float, printed_area: Optional[float]) -
     if not printed_area:
         return True
     return abs(computed_area - printed_area) <= MAX_AREA_RELATIVE_ERROR * printed_area
+
+
+# Nigerian cadastral plans conventionally start a traverse at the
+# northernmost beacon (westernmost as tiebreak) and proceed clockwise.
+# Getting the starting beacon or direction wrong doesn't change any
+# individual bearing/distance reading, but produces a boundary that's
+# rotated to the wrong starting corner or mirrored - a real, silent
+# accuracy risk distinct from a misread digit. This is a tolerance, not a
+# hard rule: reading noise can make two beacons nearly tie for
+# "northernmost," and it only makes sense to check once there's an actual
+# polygon (3+ vertices) to evaluate.
+_ORIGIN_NORTHING_TOLERANCE_M = 5.0
+
+
+def check_traverse_convention(vertices: List[Tuple[float, float]]) -> Optional[str]:
+    """
+    Flags a traverse that doesn't follow the standard north-start,
+    clockwise convention. Returns a human-readable description of what's
+    off (to fold into a crs_note/warning), or None if it matches
+    convention or there are too few vertices to judge.
+
+    This is a review flag, not proof of an error - some real plans
+    legitimately start elsewhere, and reading noise can shift which point
+    is technically northernmost. It exists so a beacon-order or direction
+    mistake (which doesn't corrupt any individual bearing/distance value,
+    so nothing else in this pipeline would catch it) gets surfaced to the
+    user instead of silently producing a rotated or mirrored shape.
+    """
+    if len(vertices) < 3:
+        return None
+
+    issues = []
+
+    max_northing = max(v[1] for v in vertices)
+    origin_northing = vertices[0][1]
+    if max_northing - origin_northing > _ORIGIN_NORTHING_TOLERANCE_M:
+        issues.append("doesn't start at the northernmost point")
+
+    if signed_area(vertices) > 0:
+        issues.append("runs counter-clockwise rather than clockwise")
+
+    return " and ".join(issues) if issues else None
 
 
 def parse_bearings(text: str) -> List[float]:
@@ -130,19 +180,19 @@ def format_bearing(deg: float) -> str:
     return f"{whole}°{minutes:02d}'"
 
 
-def compute_traverse(
+def walk_traverse(
     origin_en: Tuple[float, float],
     legs: List[Tuple[float, float]],
-) -> Optional[List[Tuple[float, float]]]:
+) -> List[Tuple[float, float]]:
     """
     origin_en: (easting, northing) starting point.
     legs: (bearing_degrees, distance_m) pairs, in traverse order.
-    Returns the (easting, northing) vertices - the closing point is
-    dropped, not repeated - if the walk closes within tolerance, else None.
+    Walks every leg unconditionally and returns all len(legs)+1 vertices
+    (the origin, each beacon in between, and finally wherever the last leg
+    ends up - which should coincide with the origin for an accurate closed
+    traverse, but isn't checked or enforced here). See compute_traverse()
+    for the gated version that validates and drops that final vertex.
     """
-    if not legs:
-        return None
-
     easting, northing = origin_en
     vertices = [(easting, northing)]
     for bearing, distance in legs:
@@ -150,7 +200,23 @@ def compute_traverse(
         easting += distance * math.sin(rad)
         northing += distance * math.cos(rad)
         vertices.append((easting, northing))
+    return vertices
 
+
+def compute_traverse(
+    origin_en: Tuple[float, float],
+    legs: List[Tuple[float, float]],
+) -> Optional[List[Tuple[float, float]]]:
+    """
+    Returns the (easting, northing) vertices - the closing point is
+    dropped, not repeated - if the walk closes within tolerance, else None.
+    See build_open_polygon() for the graceful-degradation fallback used
+    when a real (if imperfect) shape is preferable to discarding it.
+    """
+    if not legs:
+        return None
+
+    vertices = walk_traverse(origin_en, legs)
     closure_error = math.hypot(vertices[-1][0] - vertices[0][0], vertices[-1][1] - vertices[0][1])
     perimeter = sum(d for _, d in legs)
     tolerance = max(MAX_CLOSURE_ERROR_M, MAX_CLOSURE_FRACTION * perimeter)
@@ -160,38 +226,43 @@ def compute_traverse(
     return vertices[:-1]
 
 
+def build_open_polygon(
+    origin_en: Tuple[float, float],
+    legs: List[Tuple[float, float]],
+) -> Tuple[List[Tuple[float, float]], float]:
+    """
+    Walks the full traverse and returns it as a usable shape even when it
+    doesn't close within compute_traverse()'s tolerance - dropping only the
+    final (possibly non-coincident) closing vertex, same as
+    compute_traverse(). Returns (vertices, closure_error_m).
+
+    This is the deliberate fallback for old or hand-surveyed plans: small
+    historical measurement drift (decades-old chain-and-compass surveys,
+    hand-copied figures, a beacon that's shifted slightly since) is common
+    even when every bearing and distance was read correctly, and silently
+    collapsing to a single point in that case throws away real information.
+    An approximate shape, openly flagged as unclosed by the caller, gives a
+    reviewer something concrete to check against the original document -
+    exactly what the bearing/distance editor (see app_home.py) is for.
+    """
+    if len(legs) < 3:
+        return [], 0.0
+    vertices = walk_traverse(origin_en, legs)
+    closure_error = math.hypot(vertices[-1][0] - vertices[0][0], vertices[-1][1] - vertices[0][1])
+    return vertices[:-1], closure_error
+
+
 def build_legs_from_text(text: str) -> Optional[List[Tuple[float, float]]]:
     """Returns (bearing_degrees, distance_m) leg pairs in traverse order, or
     None if the text doesn't contain a matching bearing/distance count.
-    Exposed separately from build_polygon_from_text so a caller can show
-    the raw legs to a user for review/correction (see app_home.py's legs
-    editor) even when they don't - yet - close into a valid polygon."""
+    Exposed separately so a caller can show the raw legs to a user for
+    review/correction (see app_home.py's legs editor) even when they don't
+    - yet - close into a valid polygon."""
     bearings = parse_bearings(text)
     distances = parse_distances(text)
     if not bearings or len(bearings) != len(distances):
         return None
     return list(zip(bearings, distances))
-
-
-def build_polygon_from_text(
-    text: str,
-    origin_en: Tuple[float, float],
-) -> Optional[List[Tuple[float, float]]]:
-    """Returns (easting, northing) polygon vertices, or None if the text
-    doesn't contain a matching, closing, area-consistent bearing/distance
-    traverse."""
-    legs = build_legs_from_text(text)
-    if legs is None:
-        return None
-
-    polygon = compute_traverse(origin_en, legs)
-    if polygon is None:
-        return None
-
-    if not area_within_tolerance(shoelace_area(polygon), parse_area_sqm(text)):
-        return None
-
-    return polygon
 
 
 # Good to well under a centimeter of error at plot-boundary scale (tens to
@@ -206,7 +277,7 @@ def resolve_recomputed_points(
     origin_en: Tuple[float, float],
     origin_latlon: Tuple[float, float],
     legs: List[Tuple[float, float]],
-) -> Optional[List[Tuple[float, float]]]:
+) -> Tuple[Optional[List[Tuple[float, float]]], bool]:
     """
     Rebuilds a WGS84 polygon after a user edits the bearing/distance table
     (see app_home.py's legs editor). Walks the traverse in projected
@@ -215,23 +286,31 @@ def resolve_recomputed_points(
     approximation - see _METERS_PER_DEG_LAT above for why this doesn't need
     the original EPSG code at all.
 
-    Returns None if the edited legs don't close within compute_traverse()'s
-    tolerance - the caller should keep showing the last valid result rather
-    than a confidently wrong shape from a bad edit.
+    Returns (points, closed). If the edited legs don't close within
+    compute_traverse()'s tolerance, falls back to build_open_polygon()
+    instead of discarding the edit outright - old/hand-surveyed plans
+    often don't close exactly even when every value was transcribed
+    correctly, and an openly-flagged approximate shape (closed=False) is
+    more useful to a reviewer than losing their edit. points is None only
+    when there are too few legs to form a shape at all.
     """
     polygon_en = compute_traverse(origin_en, legs)
+    closed = polygon_en is not None
+    if not closed:
+        polygon_en, _ = build_open_polygon(origin_en, legs)
+
     if not polygon_en or len(polygon_en) < 3:
-        return None
+        return None, False
 
     origin_easting, origin_northing = origin_en
     lat0, lon0 = origin_latlon
     meters_per_deg_lon = _METERS_PER_DEG_LAT * math.cos(math.radians(lat0))
     if meters_per_deg_lon <= 0:
-        return None
+        return None, False
 
     points = []
     for easting, northing in polygon_en:
         d_lat = (northing - origin_northing) / _METERS_PER_DEG_LAT
         d_lon = (easting - origin_easting) / meters_per_deg_lon
         points.append((lat0 + d_lat, lon0 + d_lon))
-    return points
+    return points, closed

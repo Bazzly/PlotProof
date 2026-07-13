@@ -76,9 +76,23 @@ _EXTRACTION_SCHEMA = {
                     "code": {"type": ["string", "null"], "description": "Beacon code, e.g. GB8564AHX."},
                     "bearing_to_next": {
                         "type": ["string", "null"],
-                        "description": "Bearing to the next beacon as printed, e.g. 'N45°12'E' or '134°30'00\"'.",
+                        "description": (
+                            "Bearing to the next beacon as printed, e.g. 'N45°12'E' or '134°30'00\"'. "
+                            "Give your best-effort reading even if faint, angled, or handwritten - "
+                            "only use null if truly nothing is legible at that spot. A low-confidence "
+                            "guess is far more useful here than null: the app shows this value to the "
+                            "user in an editable table for them to correct, so a guess they can fix "
+                            "beats a blank they can't."
+                        ),
                     },
-                    "distance_to_next_m": {"type": ["number", "null"]},
+                    "distance_to_next_m": {
+                        "type": ["number", "null"],
+                        "description": (
+                            "Distance in metres to the next beacon. Same guidance as bearing_to_next: "
+                            "give your best-effort reading rather than null whenever any digits are "
+                            "legible, and use extraction_notes for anything genuinely uncertain."
+                        ),
+                    },
                 },
                 "required": ["code", "bearing_to_next", "distance_to_next_m"],
                 "additionalProperties": False,
@@ -121,8 +135,27 @@ of the traverse leg from each beacon to the next
 - the printed plot area in square metres
 - the printed scale
 
-If a value is not visible or you are not confident, use null rather than \
-guessing, and note the issue in extraction_notes."""
+The beacon order matters as much as the individual values: list beacons in \
+the exact sequence printed on the plan (this is what the bearings and \
+distances are relative to), not reordered or grouped by your own judgement. \
+Nigerian cadastral plans conventionally start the traverse at the \
+northernmost beacon and proceed clockwise - if the plan's printed order \
+looks like it does something else (starts elsewhere, runs counter-clockwise), \
+transcribe it exactly as printed anyway and flag this in extraction_notes \
+rather than silently reordering it to match the convention. Also note in \
+extraction_notes if the labeled origin coordinate is a separate reference \
+point rather than the same physical location as the first beacon.
+
+For owner name, declared CRS text, area, and scale: if a value is genuinely \
+not visible, use null rather than guessing.
+
+For each beacon's bearing and distance specifically, this does NOT apply - \
+always give your best-effort numeric reading, even from faint, angled, or \
+handwritten figures, rather than null. These values are shown to the user \
+afterward in an editable table for review and correction, so a low-confidence \
+guess they can fix is far more useful than a blank they can't. Only use null \
+for a bearing or distance if literally nothing is legible at that spot on the \
+page. Note anything you're unsure about in extraction_notes either way."""
 
 def is_available() -> bool:
     return bool(app_config.get_anthropic_api_key())
@@ -200,14 +233,27 @@ def extract_points_from_image(
     origin_en = (easting, northing)
     declared = None if forced_epsg else crs_utils.detect_declared_crs(data.get("declared_crs_text") or "")
 
+    beacons = data.get("beacons") or []
+    # "PL1", "PL2", ... for any beacon with no printed/legible code - common
+    # on old plans, which often predate the beacon-numbering convention
+    # newer plans use. Collected up front (not inline in the loop below) so
+    # each row's line label can reference the *next* beacon's code too.
+    codes = [b.get("code") or f"PL{i + 1}" for i, b in enumerate(beacons)]
+
     rows = []
     legs = []
     legs_complete = True
-    for beacon in data.get("beacons") or []:
+    for i, beacon in enumerate(beacons):
         bearing_text = beacon.get("bearing_to_next")
         bearing_deg = traverse.parse_bearing_string(bearing_text)
         distance = beacon.get("distance_to_next_m")
-        rows.append({"beacon": beacon.get("code") or None, "bearing_text": bearing_text or "", "distance_m": distance})
+        # Each row's bearing/distance describes the LINE from this beacon to
+        # the next one (wrapping back to the first beacon on the closing
+        # leg), not a single point - label it as such.
+        next_code = codes[(i + 1) % len(codes)]
+        rows.append(
+            {"beacon": f"{codes[i]} → {next_code}", "bearing_text": bearing_text or "", "distance_m": distance}
+        )
         if bearing_deg is None or distance is None:
             legs_complete = False
         else:
@@ -219,18 +265,64 @@ def extract_points_from_image(
         if polygon_en and not traverse.area_within_tolerance(traverse.shoelace_area(polygon_en), data.get("area_sqm")):
             polygon_en = None
 
+    # Strict reconstruction failed (didn't close, or area mismatch) - for
+    # old or hand-surveyed plans this is common even with correctly-read
+    # values, since decades-old measurements drift. Deduce the boundary
+    # anyway rather than collapsing to a single point, openly flagged as
+    # approximate so there's a real shape to check against the original
+    # document instead of nothing at all.
+    closure_error = None
+    if not polygon_en and legs_complete and len(legs) >= 3:
+        polygon_en, closure_error = traverse.build_open_polygon(origin_en, legs)
+
     points_en = polygon_en if polygon_en and len(polygon_en) >= 3 else [origin_en]
+    # A wrong starting beacon or traverse direction doesn't corrupt any
+    # individual bearing/distance value, so nothing above would catch it -
+    # check separately against the standard north-start, clockwise
+    # convention (see traverse.check_traverse_convention()) before this
+    # goes into a note the user sees.
+    convention_issue = traverse.check_traverse_convention(points_en)
     converted, crs_note = crs_utils.resolve_to_wgs84(points_en, declared=declared, forced_epsg=forced_epsg)
     valid_points = [(lat, lon) for lat, lon in converted if -90 <= lat <= 90 and -180 <= lon <= 180]
 
-    legs_info = {"origin_en": origin_en, "rows": rows} if rows and valid_points else None
+    # The origin (always vertex 0 - see traverse.walk_traverse()) is what
+    # every other point in valid_points is calculated FROM, so the UI
+    # surfaces it distinctly above the leg table rather than leaving it as
+    # just the first, unlabeled line of the coordinates box. Built from the
+    # verified numeric easting/northing fields, NOT origin["label_raw"] -
+    # label_raw is the model's own free-text transcription of the printed
+    # label and can contain its own misreads (confirmed: a real plan's
+    # "517440.880" got transcribed as "S17 440.880", a visual 5/S mix-up)
+    # independent of the structured numeric fields, which is all this
+    # calculation actually uses - showing the transcription here would
+    # describe the origin differently than what was actually computed.
+    legs_info = (
+        {
+            "origin_en": origin_en,
+            "origin_label": f"{easting:.3f}mE / {northing:.3f}mN",
+            "origin_latlon": valid_points[0],
+            "rows": rows,
+        }
+        if rows and valid_points
+        else None
+    )
 
     if valid_points:
-        note = (
-            f"boundary reconstructed from a {len(legs)}-leg traverse (vision extraction)"
-            if polygon_en
-            else "origin point only (vision extraction; boundary not confidently reconstructed)"
-        )
+        if closure_error is not None:
+            note = (
+                f"approximate boundary from a {len(legs)}-leg traverse (vision extraction) - doesn't "
+                f"fully close (~{closure_error:.1f}m gap), review the bearings/distances below"
+            )
+        elif polygon_en and len(polygon_en) >= 3:
+            note = f"boundary reconstructed from a {len(legs)}-leg traverse (vision extraction)"
+        else:
+            note = "origin point only (vision extraction; boundary not confidently reconstructed)"
+        if convention_issue:
+            note += (
+                f"; this traverse {convention_issue} - the standard convention starts at the "
+                "northernmost beacon and goes clockwise, so double-check the beacon order and "
+                "starting point below against your original document"
+            )
         crs_note = f"{crs_note}; {note}" if crs_note else note
 
     return valid_points, crs_note, raw_summary, legs_info
