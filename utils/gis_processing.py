@@ -12,11 +12,12 @@ for a real land-records source later.
 """
 
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Optional, Tuple
 
 import geopandas as gpd
 import pandas as pd
 from shapely.geometry import Point, LineString, Polygon
+from shapely.validation import explain_validity
 
 from utils import registry
 
@@ -55,6 +56,31 @@ def nearby_plots_for_context(
     neighbors_m = neighbors_gdf.to_crs(utm_crs)
     within = neighbors_m.geometry.distance(user_geom_m) <= radius_m
     return neighbors_gdf[within.values]
+
+
+def check_boundary_validity(points: List[Tuple[float, float]]) -> Optional[str]:
+    """A self-intersecting ("bowtie") boundary is geometrically impossible
+    as a real plot outline - it's either a data-entry/reading error (wrong
+    beacon order, a transposed coordinate) or, less commonly, a sign of a
+    manipulated document. Either way it's worth surfacing before the user
+    trusts the shape shown. Checked on the raw ring here (via shapely,
+    before build_user_plot_gdf() closes it into a GeoDataFrame) since
+    that's real, checkable geometry - not a guess about intent. Only
+    meaningful for an actual boundary (3+ points); a 1-2 point buffer
+    estimate has no ring to self-intersect."""
+    if len(points) < 3:
+        return None
+    coords_lonlat = [(lon, lat) for lat, lon in points]
+    if coords_lonlat[0] != coords_lonlat[-1]:
+        coords_lonlat.append(coords_lonlat[0])
+    geom = Polygon(coords_lonlat)
+    if geom.is_valid:
+        return None
+    return (
+        f"This boundary's outline crosses itself ({explain_validity(geom)}), which isn't a "
+        "geometrically possible plot shape - it usually means a beacon is out of order or a "
+        "coordinate was misread/mistyped. Please check the order and values of your coordinates."
+    )
 
 
 def build_user_plot_gdf(

@@ -20,7 +20,47 @@ from typing import Optional, Tuple
 
 import fitz  # PyMuPDF
 import pytesseract
-from PIL import Image, ImageFilter, ImageOps
+from PIL import Image, ImageFilter, ImageOps, ImageStat
+
+# Below this on the shorter side, extraction (OCR or vision) is working
+# with too few pixels per printed character to read reliably regardless of
+# focus - a real, checkable floor, not a blur heuristic.
+_MIN_DIMENSION_PX = 600
+
+# Standard-deviation-of-edges-after-FIND_EDGES is a coarse, PIL-only stand-in
+# for the classic "variance of Laplacian" blur metric (no numpy/opencv
+# dependency needed) - a sharp, in-focus photo has strong edges and high
+# variance; a blurry one's edges are smeared out and the variance is low.
+# This threshold is a rough heuristic, not a calibrated measurement -
+# labeled as such wherever it's shown to the user.
+_BLUR_STDDEV_THRESHOLD = 8.0
+
+
+def check_image_quality(image_path: str) -> Optional[str]:
+    """Returns a plain-English warning if the image looks too low-resolution
+    or too blurry for extraction to read reliably, else None. Best-effort
+    heuristic (see _BLUR_STDDEV_THRESHOLD) - flags "this might be hard to
+    read", not a certified image-quality measurement."""
+    try:
+        with Image.open(image_path) as img:
+            width, height = img.size
+            if min(width, height) < _MIN_DIMENSION_PX:
+                return (
+                    f"This image is quite low-resolution ({width}x{height}px), which can make "
+                    "coordinates and text hard to read accurately. A higher-resolution photo or "
+                    "scan, if you have one, would give a more reliable result."
+                )
+            edges = img.convert("L").filter(ImageFilter.FIND_EDGES)
+            stddev = ImageStat.Stat(edges).stddev[0]
+            if stddev < _BLUR_STDDEV_THRESHOLD:
+                return (
+                    "This image looks like it might be blurry or out of focus, which can make "
+                    "coordinates and text hard to read accurately. A sharper photo or scan, if you "
+                    "have one, would give a more reliable result."
+                )
+    except Exception:
+        return None
+    return None
 
 UPLOAD_DIR = Path(__file__).resolve().parent.parent / "data" / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)

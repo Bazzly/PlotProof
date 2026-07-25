@@ -7,7 +7,7 @@ logic only lives in one place.
 import re
 from typing import List, Optional, Tuple
 
-from utils import crs_utils, plan_vectors, traverse
+from utils import crs_utils, document_metadata, plan_vectors, traverse
 
 # Lookaround guards on every alternative below prevent matching a partial
 # prefix/suffix of a longer, malformed digit run (e.g. OCR mangling
@@ -142,7 +142,7 @@ def _legs_info(
 
 def parse_coordinate_text(
     text: str, pdf_path: Optional[str] = None, forced_epsg: Optional[str] = None
-) -> Tuple[List[Tuple[float, float]], Optional[str], Optional[dict]]:
+) -> Tuple[List[Tuple[float, float]], Optional[str], Optional[dict], dict]:
     """
     Extract (lat, lon) pairs from free-form text, one or more per line.
     Handles both WGS84 decimal-degree pairs ("6.5244, 3.3792") and
@@ -160,7 +160,7 @@ def parse_coordinate_text(
     alone and someone who knows their plan's real CRS should be able to
     just say so.
 
-    Returns (points, crs_note, legs_info):
+    Returns (points, crs_note, legs_info, document_info):
       - crs_note is None if input was already WGS84 degrees.
       - crs_note is "EPSG:xxxx (Name)" if a projected CRS was detected and converted.
       - crs_note is "undetected" if projected-looking numbers couldn't be matched
@@ -172,7 +172,13 @@ def parse_coordinate_text(
         and correct rather than trusting it silently. Never set for the
         vector-drawing method (plan_vectors.py), which reads beacon
         positions directly and has no bearing/distance to show.
+      - document_info is utils/document_metadata.py's best-effort
+        survey_number/surveyor_name/plan_date/scale_text/area_sqm regex
+        extraction - always a dict (never None), individual fields None
+        when not found. Computed once regardless of which branch below
+        returns, since it doesn't depend on how the coordinates parse.
     """
+    doc_info = document_metadata.extract_from_text(text)
     known_en, ambiguous = _parse_pairs(text)
 
     geographic = [p for p in ambiguous if not crs_utils.looks_projected(p)]
@@ -182,7 +188,7 @@ def parse_coordinate_text(
 
     projected_en = known_en + unlabeled_en
     if not projected_en:
-        return [p for p in geographic if is_valid_latlon(*p)], None, None
+        return [p for p in geographic if is_valid_latlon(*p)], None, None, doc_info
 
     declared = None if forced_epsg else crs_utils.detect_declared_crs(text)
 
@@ -231,7 +237,7 @@ def parse_coordinate_text(
                         "order and starting point below against your original document"
                     )
                 crs_note = f"{crs_note}; {note}" if crs_note else note
-                return valid_points, crs_note, (_legs_info(origin_en, valid_points[0], legs) if legs else None)
+                return valid_points, crs_note, (_legs_info(origin_en, valid_points[0], legs) if legs else None), doc_info
 
         # Strict reconstruction failed (didn't close, or area mismatch) -
         # for old or hand-surveyed plans this is common even when every
@@ -258,7 +264,7 @@ def parse_coordinate_text(
                             "the beacon order and starting point too"
                         )
                     crs_note = f"{crs_note}; {note}" if crs_note else note
-                    return valid_points, crs_note, _legs_info(origin_en, valid_points[0], legs)
+                    return valid_points, crs_note, _legs_info(origin_en, valid_points[0], legs), doc_info
 
         # Not even an open shape was possible (fewer than 3 legs). Still
         # expose any raw legs we did parse so the UI can offer a chance to
@@ -267,9 +273,9 @@ def parse_coordinate_text(
         if legs:
             converted, crs_note = crs_utils.resolve_to_wgs84([origin_en], declared=declared, forced_epsg=forced_epsg)
             valid_points = [p for p in converted if is_valid_latlon(*p)]
-            return valid_points, crs_note, (_legs_info(origin_en, valid_points[0], legs) if valid_points else None)
+            return valid_points, crs_note, (_legs_info(origin_en, valid_points[0], legs) if valid_points else None), doc_info
 
     converted, crs_note = crs_utils.resolve_to_wgs84(projected_en, declared=declared, forced_epsg=forced_epsg)
     points = geographic + converted
     valid_points = [(lat, lon) for lat, lon in points if is_valid_latlon(lat, lon)]
-    return valid_points, crs_note, None
+    return valid_points, crs_note, None, doc_info

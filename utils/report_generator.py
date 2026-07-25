@@ -10,15 +10,20 @@ diagram of the plot boundary, a proper coordinates table, and clickable
 contact links in the footer.
 """
 
+import csv
 import io
+import json
 import math
 import os
+import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+import qrcode
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import inch
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
 from utils import theme
@@ -29,6 +34,7 @@ CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN
 
 WHATSAPP_LINK = os.environ.get("WHATSAPP_LINK", "https://chat.whatsapp.com/KrMfFgenA5u50QTASfyyro?s=cl&p=a&ilr=1")
 CALENDLY_LINK = os.environ.get("CALENDLY_LINK", "https://calendly.com/bazeet4love")
+APP_URL = os.environ.get("APP_URL", "https://plotproof.streamlit.app")
 
 ACCENT = colors.HexColor(theme.ACCENT_LIGHT)
 INK_PRIMARY = colors.HexColor(theme.INK["primary"])
@@ -71,7 +77,16 @@ def _new_page(c: canvas.Canvas) -> float:
     return PAGE_HEIGHT - MARGIN
 
 
-def _draw_header(c: canvas.Canvas, risk_level: str) -> float:
+def generate_report_id() -> str:
+    """A short, unique-enough identifier for this specific report - not a
+    lookup key into any stored record (PlotProof doesn't persist reports),
+    just something a user can reference/quote if they contact us about a
+    particular PDF, and a visible sign this came from a real, traceable run
+    rather than something edited after the fact."""
+    return f"PP-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
+
+
+def _draw_header(c: canvas.Canvas, risk_level: str, report_id: str) -> float:
     band_height = 1.05 * inch
     c.setFillColor(ACCENT)
     c.rect(0, PAGE_HEIGHT - band_height, PAGE_WIDTH, band_height, stroke=0, fill=1)
@@ -101,6 +116,8 @@ def _draw_header(c: canvas.Canvas, risk_level: str) -> float:
     c.drawRightString(PAGE_WIDTH - MARGIN, PAGE_HEIGHT - 0.42 * inch, meta)
     c.setFont("Helvetica-Bold", 8.5)
     c.drawRightString(PAGE_WIDTH - MARGIN, PAGE_HEIGHT - 0.58 * inch, f"RISK LEVEL: {risk_level.upper()}")
+    c.setFont("Helvetica", 7.5)
+    c.drawRightString(PAGE_WIDTH - MARGIN, PAGE_HEIGHT - 0.74 * inch, f"Report ID: {report_id}")
 
     return PAGE_HEIGHT - band_height - 0.3 * inch
 
@@ -462,6 +479,31 @@ def _draw_plots_table(c: canvas.Canvas, y: float, result: Dict[str, Any]) -> flo
     return top - table_h - 0.25 * inch
 
 
+def _draw_qr_block(c: canvas.Canvas, y: float, report_id: str) -> float:
+    """A scannable link back to PlotProof itself (not a link to this
+    specific report - nothing about a report is persisted server-side, so
+    there's nothing to look up by report_id) for someone who wants to run
+    their own check after seeing this one, e.g. a neighbor or the other
+    party in a transaction."""
+    qr_size = 0.75 * inch
+    if y - qr_size < MARGIN + 0.6 * inch:
+        y = _new_page(c)
+
+    qr_img = qrcode.make(APP_URL, border=1).get_image()
+    c.drawImage(ImageReader(qr_img), MARGIN, y - qr_size, width=qr_size, height=qr_size, mask="auto")
+
+    text_x = MARGIN + qr_size + 0.15 * inch
+    c.setFillColor(INK_PRIMARY)
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(text_x, y - 0.22 * inch, "Scan to check your own land")
+    c.setFillColor(INK_MUTED)
+    c.setFont("Helvetica", 7.5)
+    c.drawString(text_x, y - 0.36 * inch, APP_URL)
+    c.drawString(text_x, y - 0.48 * inch, f"Report ID: {report_id}")
+
+    return y - qr_size - 0.25 * inch
+
+
 def _draw_footer(c: canvas.Canvas) -> None:
     band_h = 0.55 * inch
     c.setFillColor(INK_PRIMARY)
@@ -495,6 +537,45 @@ def _draw_footer(c: canvas.Canvas) -> None:
     )
 
 
+def generate_csv_report(points: List[Tuple[float, float]]) -> io.BytesIO:
+    """Raw boundary coordinates only, for a user who wants to drop this
+    straight into a spreadsheet or another GIS tool rather than read a
+    formatted PDF."""
+    text_buffer = io.StringIO()
+    writer = csv.writer(text_buffer)
+    writer.writerow(["point", "latitude", "longitude"])
+    for i, (lat, lon) in enumerate(points, start=1):
+        writer.writerow([i, f"{lat:.6f}", f"{lon:.6f}"])
+    return io.BytesIO(text_buffer.getvalue().encode("utf-8"))
+
+
+def generate_geojson_report(points: List[Tuple[float, float]], result: Dict[str, Any]) -> io.BytesIO:
+    """A GeoJSON Feature - a Polygon when there are enough points to close a
+    real boundary (ring closed back to the first point, per the GeoJSON
+    spec), otherwise a Point for a single/pair-coordinate estimate. Carries
+    the same risk_level/findings/recommendations already shown on the page
+    and in the PDF as properties, so the file is self-describing without
+    needing the app open alongside it - useful for a user's own GIS software."""
+    coords_lonlat = [[lon, lat] for lat, lon in points]
+    if len(points) >= 3:
+        ring = coords_lonlat + [coords_lonlat[0]]
+        geometry: Dict[str, Any] = {"type": "Polygon", "coordinates": [ring]}
+    else:
+        geometry = {"type": "Point", "coordinates": coords_lonlat[0]}
+    feature = {
+        "type": "Feature",
+        "geometry": geometry,
+        "properties": {
+            "risk_level": result["risk_level"],
+            "findings": result["findings"],
+            "recommendations": result["recommendations"],
+            "generated": datetime.now().isoformat(),
+        },
+    }
+    payload = {"type": "FeatureCollection", "features": [feature]}
+    return io.BytesIO(json.dumps(payload, indent=2).encode("utf-8"))
+
+
 def generate_pdf_report(
     result: Dict[str, Any],
     points: List[Tuple[float, float]],
@@ -511,8 +592,9 @@ def generate_pdf_report(
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=letter)
     risk_level = result["risk_level"]
+    report_id = generate_report_id()
 
-    y = _draw_header(c, risk_level)
+    y = _draw_header(c, risk_level, report_id)
     y = _draw_risk_badge(c, y, risk_level)
     y = _draw_risk_gauge(c, y, risk_level)
 
@@ -530,6 +612,8 @@ def generate_pdf_report(
     y = _draw_coordinates_table(c, y, points, title="Your Plot - Coordinates Assessed" if neighbor_plots else "Coordinates Assessed")
     for neighbor in neighbor_plots:
         y = _draw_coordinates_table(c, y, neighbor["points"], title=f"{neighbor['label']} - Coordinates Provided")
+
+    y = _draw_qr_block(c, y, report_id)
 
     _draw_footer(c)
     c.showPage()

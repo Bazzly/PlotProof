@@ -25,9 +25,10 @@ def main() -> None:
 
     for arg in sys.argv[1:]:
         print(f"\n{'=' * 70}\n{arg}\n{'=' * 70}")
-        points, crs_note, raw_summary, legs_info = vision_extract.extract_points_from_image(arg)
+        points, crs_note, raw_summary, legs_info, document_info = vision_extract.extract_points_from_image(arg)
         print(raw_summary)
-        print(f"\ncrs_note: {crs_note}")
+        print(f"\ndocument_info: {document_info}")
+        print(f"crs_note: {crs_note}")
         print(f"points ({len(points)}):")
         for lat, lon in points:
             print(f"  {lat:.6f}, {lon:.6f}")

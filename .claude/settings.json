@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pkill -f \"streamlit run app.py --server.headless true --server.port 8522\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8523)",
+      "Bash(.venv/bin/python /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/test_minimal.py)",
+      "Bash(pkill -f \"server.port 8523\")",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(.venv/bin/python /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/test_clear_fixed.py)",
+      "Bash(.venv/bin/python /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/test_geometry.py)",
+      "Bash(pkill -f \"minimal_clear_test.py\")",
+      "Bash(lsof -i :8522 -sTCP:LISTEN -t)",
+      "Bash(lsof -i :8523 -sTCP:LISTEN -t)"
+    ]
+  }
+}

@@ -40,6 +40,18 @@ _EXTRACTION_SCHEMA = {
             "type": ["string", "null"],
             "description": "Name of the plot owner printed on the plan, if visible.",
         },
+        "survey_number": {
+            "type": ["string", "null"],
+            "description": "The survey/plan/file number printed on the plan, e.g. 'OG/12345/2020'.",
+        },
+        "surveyor_name": {
+            "type": ["string", "null"],
+            "description": "Name of the licensed surveyor who prepared/signed the plan, if visible.",
+        },
+        "plan_date": {
+            "type": ["string", "null"],
+            "description": "The date the plan was made/signed, as printed (any format).",
+        },
         "declared_crs_text": {
             "type": ["string", "null"],
             "description": (
@@ -111,6 +123,9 @@ _EXTRACTION_SCHEMA = {
     },
     "required": [
         "owner_name",
+        "survey_number",
+        "surveyor_name",
+        "plan_date",
         "declared_crs_text",
         "origin_point",
         "beacons",
@@ -128,6 +143,9 @@ each boundary line).
 
 Read the plan carefully, including rotated and vertical text, and extract:
 - the owner's name
+- the survey/plan/file number
+- the licensed surveyor's name, if signed/printed
+- the date the plan was made or signed
 - the declared coordinate system / UTM zone / datum, verbatim
 - the origin/reference coordinate (Northing and Easting, in metres)
 - every beacon around the boundary, in order, with the bearing and distance \
@@ -146,8 +164,9 @@ rather than silently reordering it to match the convention. Also note in \
 extraction_notes if the labeled origin coordinate is a separate reference \
 point rather than the same physical location as the first beacon.
 
-For owner name, declared CRS text, area, and scale: if a value is genuinely \
-not visible, use null rather than guessing.
+For owner name, survey number, surveyor name, plan date, declared CRS text, \
+area, and scale: if a value is genuinely not visible, use null rather than \
+guessing.
 
 For each beacon's bearing and distance specifically, this does NOT apply - \
 always give your best-effort numeric reading, even from faint, angled, or \
@@ -193,6 +212,9 @@ def _summarize(data: dict) -> str:
     origin = data.get("origin_point") or {}
     lines = [
         f"Owner: {data.get('owner_name') or '(not read)'}",
+        f"Survey number: {data.get('survey_number') or '(not read)'}",
+        f"Surveyor: {data.get('surveyor_name') or '(not read)'}",
+        f"Plan date: {data.get('plan_date') or '(not read)'}",
         f"Declared CRS text: {data.get('declared_crs_text') or '(not stated)'}",
         f"Origin: {origin.get('label_raw') or ''} (N={origin.get('northing')}, E={origin.get('easting')})",
         f"Area: {data.get('area_sqm')} sqm, Scale: {data.get('scale_text')}",
@@ -206,13 +228,13 @@ def _summarize(data: dict) -> str:
 
 def extract_points_from_image(
     image_path: str, forced_epsg: Optional[str] = None
-) -> Tuple[List[Tuple[float, float]], Optional[str], str, Optional[dict]]:
+) -> Tuple[List[Tuple[float, float]], Optional[str], str, Optional[dict], dict]:
     """
-    Returns (points, crs_note, raw_summary, legs_info) - points/crs_note
-    are in the same shape coordinates.parse_coordinate_text() produces, so
-    callers can treat this as a drop-in alternative extraction path for
-    images. raw_summary is a human-readable transcript, stored for the
-    opt-in training-data record and for debugging, not for re-parsing.
+    Returns (points, crs_note, raw_summary, legs_info, document_info) -
+    points/crs_note are in the same shape coordinates.parse_coordinate_text()
+    produces, so callers can treat this as a drop-in alternative extraction
+    path for images. raw_summary is a human-readable transcript, stored for
+    the opt-in training-data record and for debugging, not for re-parsing.
 
     legs_info carries every beacon's bearing/distance as read by the
     model, in the same {"origin_en", "rows": [...]} shape
@@ -221,14 +243,28 @@ def extract_points_from_image(
     UI (see app_home.py's legs editor) can let the user fill in or correct
     exactly the beacons that need it, not just accept-or-reject the whole
     file. None only when there's no origin point at all to anchor a table to.
+
+    document_info carries the plan's own metadata (survey_number,
+    surveyor_name, plan_date, scale_text, area_sqm) in the same shape
+    utils/document_metadata.py's text-based extractor produces, so
+    app_home.py can display either extraction path's result through one
+    code path. Always returned (never None) - individual fields are None
+    when not visible on the plan.
     """
     data = _call_vision_api(image_path)
     raw_summary = _summarize(data)
+    document_info = {
+        "survey_number": data.get("survey_number"),
+        "surveyor_name": data.get("surveyor_name"),
+        "plan_date": data.get("plan_date"),
+        "scale_text": data.get("scale_text"),
+        "area_sqm": data.get("area_sqm"),
+    }
 
     origin = data.get("origin_point") or {}
     northing, easting = origin.get("northing"), origin.get("easting")
     if northing is None or easting is None:
-        return [], None, raw_summary, None
+        return [], None, raw_summary, None, document_info
 
     origin_en = (easting, northing)
     declared = None if forced_epsg else crs_utils.detect_declared_crs(data.get("declared_crs_text") or "")
@@ -325,4 +361,4 @@ def extract_points_from_image(
             )
         crs_note = f"{crs_note}; {note}" if crs_note else note
 
-    return valid_points, crs_note, raw_summary, legs_info
+    return valid_points, crs_note, raw_summary, legs_info, document_info

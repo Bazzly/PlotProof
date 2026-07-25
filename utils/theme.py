@@ -106,6 +106,28 @@ def get_css() -> str:
   }}
 }}
 
+/* ---- staged reveal animation ---- */
+/* Applied to any st.container(key="pp_stage_...") via substring match, so
+   callers don't need a matching CSS rule per stage key - see app_home.py's
+   progressive-disclosure flow (upload -> confirm coordinates -> analyze ->
+   results), each wrapped in one of these containers so it fades/slides in
+   the moment it first appears rather than the whole page being static. Runs
+   once per mount - Streamlit keeps the same DOM node across reruns for a
+   stable key, so editing something inside an already-revealed stage doesn't
+   re-trigger it. prefers-reduced-motion turns it into an instant show,
+   respecting that accessibility setting rather than forcing motion on everyone.
+*/
+@keyframes ppFadeInUp {{
+  from {{ opacity: 0; transform: translateY(14px); }}
+  to {{ opacity: 1; transform: translateY(0); }}
+}}
+[class*="st-key-pp_stage_"] {{
+  animation: ppFadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}}
+@media (prefers-reduced-motion: reduce) {{
+  [class*="st-key-pp_stage_"] {{ animation-duration: 0.001ms !important; }}
+}}
+
 /* ---- global typography ---- */
 .stApp, [data-testid="stMarkdownContainer"], [data-testid="stWidgetLabel"],
 [data-testid="stTextArea"] textarea, [data-testid="stTextInput"] input,
@@ -122,6 +144,126 @@ def get_css() -> str:
   max-width: 760px;
   padding-top: var(--pp-space-6);
 }}
+
+/* ---- landing hero (first-visit splash, before the tool itself) ---- */
+.pp-landing-hero {{
+  text-align: center;
+  padding: var(--pp-space-6) 0 var(--pp-space-4);
+}}
+.pp-landing-hero .pp-logo {{
+  width: 72px;
+  height: 72px;
+  border-radius: var(--pp-radius);
+  margin: 0 auto var(--pp-space-4);
+}}
+.pp-landing-title {{
+  font-family: var(--pp-font-heading);
+  font-size: 2.1rem;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  color: var(--pp-ink-primary);
+  margin: 0 0 var(--pp-space-3);
+}}
+.pp-landing-sub {{
+  font-size: 1.05rem;
+  line-height: 1.55;
+  color: var(--pp-ink-secondary);
+  max-width: 46ch;
+  margin: 0 auto;
+}}
+.pp-landing-steps {{
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--pp-space-4);
+  margin: var(--pp-space-4) 0 var(--pp-space-6);
+}}
+@media (max-width: 640px) {{
+  .pp-landing-steps {{ grid-template-columns: 1fr; }}
+}}
+.pp-landing-step {{
+  background: var(--pp-surface);
+  border: 1px solid var(--pp-border);
+  border-radius: var(--pp-radius);
+  padding: var(--pp-space-4);
+}}
+.pp-landing-step .pp-step-num {{ margin-bottom: var(--pp-space-2); }}
+.pp-landing-step h3 {{
+  font-family: var(--pp-font-heading);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--pp-ink-primary);
+  margin: 0 0 4px;
+}}
+.pp-landing-step p {{
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--pp-ink-secondary);
+  margin: 0;
+}}
+[class*="st-key-pp_landing_cta"] {{ text-align: center; margin: var(--pp-space-2) 0 var(--pp-space-4); }}
+[class*="st-key-pp_landing_cta"] [data-testid="stButton"] button {{
+  padding: 0.7rem 2.2rem;
+  font-size: 1.02rem;
+}}
+.pp-landing-note {{
+  text-align: center;
+  color: var(--pp-ink-muted);
+  font-size: 0.85rem;
+  margin-top: var(--pp-space-2);
+}}
+
+/* ---- wizard stepper (multi-step flows: single check, compare) ---- */
+.pp-wizard {{
+  display: flex;
+  align-items: flex-start;
+  margin: var(--pp-space-2) 0 var(--pp-space-6);
+}}
+.pp-wizard-step {{
+  flex: 0 1 130px;
+  text-align: center;
+  color: var(--pp-ink-muted);
+}}
+.pp-wizard-step-circle {{
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 6px;
+  font-family: var(--pp-font-heading);
+  font-weight: 600;
+  font-size: 0.85rem;
+  background: var(--pp-surface);
+  border: 1.5px solid var(--pp-border);
+  color: var(--pp-ink-muted);
+}}
+.pp-wizard-step-label {{
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.3;
+}}
+.pp-wizard-step--active .pp-wizard-step-circle {{
+  background: var(--pp-accent);
+  border-color: var(--pp-accent);
+  color: #ffffff;
+}}
+.pp-wizard-step--active .pp-wizard-step-label {{ color: var(--pp-ink-primary); }}
+.pp-wizard-step--done .pp-wizard-step-circle {{
+  background: var(--pp-step-num-bg);
+  border-color: var(--pp-step-num-bg);
+  color: var(--pp-step-num-ink);
+}}
+.pp-wizard-step--done .pp-wizard-step-label {{ color: var(--pp-ink-secondary); }}
+.pp-wizard-connector {{
+  flex: 1 1 auto;
+  min-width: 12px;
+  height: 1.5px;
+  background: var(--pp-border);
+  margin-top: 14px;
+}}
+.pp-wizard-connector--done {{ background: var(--pp-accent); }}
 
 /* ---- hero header ---- */
 .pp-hero {{
@@ -314,5 +456,40 @@ def get_css() -> str:
   font-weight: 600;
 }}
 [data-testid="stAlert"] {{ border-radius: var(--pp-radius); }}
+
+/* ---- accessibility: touch targets + visible keyboard focus ----
+   44px is the WCAG 2.5.5 / Apple HIG minimum comfortable tap target -
+   Streamlit's default button/checkbox sizing runs smaller. Custom
+   border-radius styling elsewhere can visually suppress the browser's
+   default focus ring, so it's redrawn explicitly rather than relying on
+   the default surviving every override. */
+[data-testid="stButton"] button, [data-testid="stDownloadButton"] button {{
+  min-height: 44px;
+}}
+[data-testid="stCheckbox"] label {{ min-height: 28px; align-items: center; }}
+[data-testid="stButton"] button:focus-visible,
+[data-testid="stDownloadButton"] button:focus-visible,
+[data-testid="stCheckbox"] input:focus-visible,
+[data-testid="stTextArea"] textarea:focus-visible,
+[data-testid="stTextInput"] input:focus-visible,
+[data-testid="stSelectbox"] div[tabindex]:focus-visible,
+a:focus-visible {{
+  outline: 2px solid var(--pp-accent);
+  outline-offset: 2px;
+}}
+
+/* ---- mobile: no horizontal scroll, comfortable spacing ---- */
+@media (max-width: 480px) {{
+  [data-testid="stMainBlockContainer"] {{ padding-left: var(--pp-space-3); padding-right: var(--pp-space-3); }}
+  .pp-landing-title {{ font-size: 1.6rem; }}
+  .pp-wizard-step {{ flex-basis: 70px; }}
+  .pp-wizard-step-label {{ font-size: 0.68rem; }}
+  .pp-cta-row {{ flex-direction: column; }}
+  .pp-cta {{ flex: none; width: 100%; }}
+  /* .pp-pill holds multi-sentence notes as well as short badges - a full
+     pill radius on a box this tall (more text wrapping at mobile width)
+     renders as a distorted oval rather than rounded corners. */
+  .pp-pill {{ display: flex; border-radius: var(--pp-radius); }}
+}}
 </style>
 """
