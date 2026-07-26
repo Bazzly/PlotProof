@@ -53,10 +53,23 @@ def render_floating_chat() -> None:
     plot-specific itself. Hidden entirely with no API key configured
     (assistant.is_available()) or before consent, same gating as the
     report-grounded assistant and the rest of the app's paid-adjacent
-    features."""
+    features.
+
+    The whole body is wrapped in a try/except - confirmed live (not
+    hypothetical) that an unhandled error in here takes down every single
+    page load for every visitor, since app.py's st.navigation().run()
+    executes this at module level before the rest of the page renders.
+    An optional add-on feature failing should never do that; it logs and
+    silently doesn't render instead."""
     if not assistant.is_available() or not st.session_state.get("_consent_accepted"):
         return
+    try:
+        _render_floating_chat_body()
+    except Exception:
+        traceback.print_exc()
 
+
+def _render_floating_chat_body() -> None:
     client_id = rate_limit.get_client_id()
     history_key = "_land_chat_history"
     question_key = "_land_chat_question"
@@ -106,8 +119,14 @@ def render_floating_chat() -> None:
         history.append((question, answer))
         st.session_state[history_key] = history
 
+    # st.popover (preferred - reads as a real floating panel) isn't in
+    # every Streamlit version this app might end up running under
+    # (requirements.txt pins a lower bound, not an exact version) -
+    # st.expander is an always-available equivalent for this simple
+    # question-box-plus-history use case if popover isn't present.
+    trigger = st.popover if hasattr(st, "popover") else st.expander
     with st.container(key="pp_floating_chat"):
-        with st.popover("💬 Ask about land & PlotProof"):
+        with trigger("💬 Ask about land & PlotProof"):
             st.markdown("**Ask about land or PlotProof**")
             st.caption(
                 "General questions only - I don't have access to any document or result of yours. "

@@ -67,7 +67,15 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8535)",
       "Bash(.venv/bin/python /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/test_fallback.py)",
       "Bash(pkill -f \"streamlit run app.py --server.headless true --server.port 8535\")",
-      "Bash(lsof -i :8535 -sTCP:LISTEN -t)"
+      "Bash(lsof -i :8535 -sTCP:LISTEN -t)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8536)",
+      "Bash(.venv/bin/python /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/test_defense.py)",
+      "Bash(pkill -f \"streamlit run app.py --server.headless true --server.port 8536\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8537)",
+      "Bash(.venv/bin/python /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/test_no_popover.py)",
+      "Bash(pkill -f \"streamlit run _test_no_popover.py --server.headless true --server.port 8537\")",
+      "Bash(lsof -i :8536 -sTCP:LISTEN -t)",
+      "Bash(lsof -i :8537 -sTCP:LISTEN -t)"
     ]
   }
 }
