@@ -291,39 +291,48 @@ def build_open_polygon(
 
 def compute_diagonal(vertices: List[Tuple[float, float]], labels: Optional[List[str]] = None) -> Optional[dict]:
     """A diagonal reference - bearing and distance in a straight line from
-    the origin (vertex 0) to the farthest other vertex in an already-
-    reconstructed boundary - computed purely from the coordinates
+    the origin (vertex 0) to the vertex directly opposite it in the
+    boundary's own sequence - computed purely from the coordinates
     PlotProof itself already generated, not read off the plan. Real
     Nigerian survey plans don't print a labeled diagonal measurement (this
     was tried and confirmed absent on real sample plans), so this is
-    always derived rather than detected, for every boundary with 3+
-    vertices: a straight-line reference from the origin across the plot,
-    useful for an on-site sanity check (e.g. pacing out the diagonal
-    distance) independent of anything the source document does or
-    doesn't state.
+    always derived rather than detected: a straight-line reference from
+    the origin across the plot, useful for an on-site sanity check (e.g.
+    pacing out the diagonal distance) independent of anything the source
+    document does or doesn't state.
+
+    The target is len(vertices) // 2 steps around from the origin - a
+    diagonal connects *non-adjacent* vertices, so for a 4-pillar plot
+    that's PL3 (2 steps from PL1 either way round a quadrilateral), for a
+    6-pillar plot PL4, and so on - not simply whichever vertex happens to
+    be geometrically farthest away, which for an irregular polygon can
+    land on an adjacent vertex (still connected to the origin by a real
+    boundary edge, not a diagonal at all).
 
     labels: beacon codes/PL-numbers in the same order as vertices, for a
     human-readable target_label - falls back to "point {n}" (1-indexed)
-    when not given. Returns None if there are fewer than 3 vertices (no
-    real shape to take a diagonal across)."""
-    if len(vertices) < 3:
+    when not given. Returns None for fewer than 4 vertices - a triangle
+    has no non-adjacent vertex pair, so no real diagonal exists."""
+    if len(vertices) < 4:
         return None
     origin = vertices[0]
-    target_index = max(
-        range(1, len(vertices)),
-        key=lambda i: math.hypot(vertices[i][0] - origin[0], vertices[i][1] - origin[1]),
-    )
+    target_index = len(vertices) // 2
     target = vertices[target_index]
     dx, dy = target[0] - origin[0], target[1] - origin[1]
     distance = math.hypot(dx, dy)
     bearing = math.degrees(math.atan2(dx, dy)) % 360
     target_label = labels[target_index] if labels and target_index < len(labels) else f"point {target_index + 1}"
+    target_easting, target_northing = target
     return {
         "bearing": bearing,
         "distance_m": distance,
         "target_index": target_index,
         "target_label": target_label,
         "point_en": target,
+        # Same "<easting>mE / <northing>mN" convention as legs_info's own
+        # origin_label (coordinates.py/vision_extract.py) - the plan's own
+        # projected coordinate system, not just the WGS84 conversion below.
+        "point_label": f"{target_easting:.3f}mE / {target_northing:.3f}mN",
     }
 
 

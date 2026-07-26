@@ -48,7 +48,15 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8531)",
       "Bash(.venv/bin/python /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/test_diag_coord.py)",
       "Bash(pkill -f \"streamlit run app.py --server.headless true --server.port 8531\")",
-      "Bash(lsof -i :8531 -sTCP:LISTEN -t)"
+      "Bash(lsof -i :8531 -sTCP:LISTEN -t)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8532)",
+      "Bash(.venv/bin/python /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/test_diag_fix.py)",
+      "Bash(pkill -f \"streamlit run app.py --server.headless true --server.port 8532\")",
+      "Bash(lsof -i :8532 -sTCP:LISTEN -t)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8533)",
+      "Bash(.venv/bin/python /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/test_dark_mode.py)",
+      "Bash(pkill -f \"streamlit run app.py --server.headless true --server.port 8533\")",
+      "Bash(lsof -i :8533 -sTCP:LISTEN -t)"
     ]
   }
 }

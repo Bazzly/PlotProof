@@ -16,11 +16,23 @@ support, and keeping one color space avoids the CSS and the PDF silently
 drifting apart - see INK's docstring).
 
 Color roles follow a validated status palette (see the dataviz skill):
-status hues (good/warning/critical) are fixed across light and dark and
-carry meaning only together with an icon + text label, never as flat
-color-on-text - see icon usage in app.py. These are intentionally NOT
-tied to the brand palette above - a risk badge should read the same
-regardless of what accent color the rest of the UI is wearing.
+status hues (good/warning/critical) carry meaning only together with an
+icon + text label, never as flat color-on-text - see icon usage in
+app.py. These are intentionally NOT tied to the brand palette above - a
+risk badge should read the same regardless of what accent color the rest
+of the UI is wearing.
+
+Deliberately single-theme (light only), matching .streamlit/config.toml's
+`base = "light"` - that config has no dark variant (Streamlit's [theme]
+section is static, not reactive), so an earlier `@media
+(prefers-color-scheme: dark)` override here that darkened custom .pp-*
+backgrounds while every native Streamlit widget (checkboxes, radio
+labels, captions, the footer) stayed on config.toml's fixed light-mode
+text color produced dark-on-dark, barely-readable text - confirmed live
+with Playwright's dark color-scheme emulation. Removed rather than fixed
+piecemeal: making this genuinely dark-mode-safe would mean re-deriving a
+full parallel palette for every native widget Streamlit itself renders,
+not just the custom markup this file controls.
 """
 
 # Fixed across light/dark - already validated to clear contrast on both surfaces.
@@ -30,13 +42,10 @@ STATUS = {
     "critical": "#d03b3b",  # High risk / overlapping plot
 }
 
-# Brand accent (deep green, oklch(38% 0.09 152) family) - the one thing
-# that does need a light/dark swap, handled via prefers-color-scheme in
-# the CSS below. Gold is the secondary/CTA accent (oklch(78% 0.13 80)),
-# used sparingly for the strongest calls to action, matching the landing
-# page's hero button.
+# Brand accent (deep green, oklch(38% 0.09 152) family). Gold is the
+# secondary/CTA accent (oklch(78% 0.13 80)), used sparingly for the
+# strongest calls to action, matching the landing page's hero button.
 ACCENT_LIGHT = "#104f29"
-ACCENT_DARK = "#59ad73"
 GOLD = "#e3ad4b"
 GOLD_INK = "#201308"
 
@@ -103,21 +112,6 @@ def get_css() -> str:
   --pp-space-4: 16px;
   --pp-space-6: 24px;
 }}
-@media (prefers-color-scheme: dark) {{
-  :root {{
-    --pp-surface: #1f160f;
-    --pp-page: #120c07;
-    --pp-ink-primary: #f1eee7;
-    --pp-ink-secondary: #c4bdb0;
-    --pp-ink-muted: #968364;
-    --pp-gridline: #3b3129;
-    --pp-border: #3b3129;
-    --pp-accent: {ACCENT_DARK};
-    --pp-step-num-bg: #103a21;
-    --pp-step-num-ink: #7fd99b;
-  }}
-}}
-
 /* ---- staged reveal animation ---- */
 /* Applied to any st.container(key="pp_stage_...") via substring match, so
    callers don't need a matching CSS rule per stage key - see app_home.py's

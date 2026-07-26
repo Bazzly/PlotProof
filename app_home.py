@@ -609,21 +609,27 @@ def render_document_input(
 
             diagonal = legs_info.get("diagonal")
             if diagonal:
-                coord_line = ""
+                # Same CRS description already shown in the upload success
+                # message/results pill (crs_note), trimmed to just the
+                # "EPSG:xxxx (Name)" portion before its first "; ..." note -
+                # the plan's own projected system, not the WGS84 conversion.
+                crs_source_note = (upload_record.get("auto_detected_crs_note") or "").split(";")[0].strip()
+                crs_label = crs_source_note or "local projected system"
+                coord_lines = f'<p>Coordinate ({crs_label}): <strong>{diagonal["point_label"]}</strong></p>'
                 if diagonal.get("point_latlon"):
                     diag_lat, diag_lon = diagonal["point_latlon"]
-                    coord_line = f"<p>Coordinate: <strong>{diag_lat:.6f}, {diag_lon:.6f}</strong></p>"
+                    coord_lines += f"<p>Coordinate (WGS84): <strong>{diag_lat:.6f}, {diag_lon:.6f}</strong></p>"
                 st.markdown(
                     f"""
                     <div class="pp-card">
                       <div class="pp-card-title">Diagonal Check</div>
-                      <p>A straight-line distance and bearing from the origin (PL1) to the farthest
+                      <p>A straight-line distance and bearing from the origin (PL1) to the opposite
                       corner, calculated directly from the boundary above - not read from your
                       document (most plans don't print one), a reference you can pace out on-site
                       to sanity-check the plot's extent.</p>
                       <p><strong>PL1 → {diagonal['target_label']}: {traverse.format_bearing(diagonal['bearing'])}
                       · {diagonal['distance_m']:.2f}m</strong></p>
-                      {coord_line}
+                      {coord_lines}
                     </div>
                     """,
                     unsafe_allow_html=True,
