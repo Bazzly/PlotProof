@@ -98,6 +98,7 @@ def check_can_run_check() -> bool:
 st.set_page_config(page_title="PlotProof - Check Your Land Risk", page_icon="assets/logo.svg", layout="centered")
 st.markdown(theme.get_css(), unsafe_allow_html=True)
 nav.render_sidebar()
+nav.render_floating_chat()
 
 # ------------------------------
 # LANDING PAGE - the first thing a visitor sees, before the tool itself.
@@ -801,10 +802,18 @@ def render_results(
                 )
             except Exception:
                 traceback.print_exc()
-                answer = (
-                    "Something went wrong answering that - please try again, or "
-                    f"[contact PlotProof]({WHATSAPP_LINK}) directly."
-                )
+                fallback = assistant.fallback_answer(question)
+                if fallback:
+                    answer = (
+                        f"{fallback}\n\n*(The AI assistant is temporarily unavailable, so this is "
+                        "from our [Common Questions](faq) page rather than an answer about your "
+                        "specific report.)*"
+                    )
+                else:
+                    answer = (
+                        "The AI assistant is temporarily unavailable right now. Check the "
+                        f"[Common Questions](faq) page, or [contact PlotProof]({WHATSAPP_LINK}) directly."
+                    )
             st.session_state.setdefault(history_key, []).append((question, answer))
 
         with st.expander("Ask about this report"):

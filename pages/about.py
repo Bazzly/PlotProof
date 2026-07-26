@@ -18,6 +18,7 @@ load_dotenv()
 st.set_page_config(page_title="About & Legal - PlotProof", page_icon="assets/logo.svg", layout="centered")
 st.markdown(theme.get_css(), unsafe_allow_html=True)
 nav.render_sidebar()
+nav.render_floating_chat()
 
 st.markdown(
     f"""

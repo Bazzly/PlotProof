@@ -291,6 +291,27 @@ def get_css() -> str:
   border-radius: var(--pp-radius);
 }}
 
+/* ---- floating chat (utils/nav.py's render_floating_chat()) ----
+   Pinned to the viewport regardless of scroll position - the trigger is
+   an st.popover, which Streamlit positions its floating panel relative
+   to via its own floating-ui layer, so pinning just this container is
+   enough; the panel follows automatically. */
+[class*="st-key-pp_floating_chat"] {{
+  position: fixed;
+  bottom: var(--pp-space-6);
+  right: var(--pp-space-6);
+  z-index: 999;
+  width: auto;
+}}
+[class*="st-key-pp_floating_chat"] [data-testid="stPopover"] button {{
+  border-radius: var(--pp-radius-pill);
+  background: var(--pp-accent);
+  color: #ffffff;
+  border-color: var(--pp-accent);
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+}}
+
 /* ---- hero header ---- */
 .pp-hero {{
   display: flex;
