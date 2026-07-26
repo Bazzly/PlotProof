@@ -9,6 +9,10 @@ Admin portal:
      extraction" checkbox on the main flow - visibility into real-world
      extraction failures, the same class of failure that motivated
      building utils/vision_extract.py in the first place.
+  3. Bulk-add known survey plans to the shared registry (see
+     utils/registry.py) - lets an admin seed real coverage for an area
+     (e.g. plans they have legitimate access to) faster than waiting for
+     individual users to opt in one plot at a time via the main flow.
 
 Gated behind ADMIN_PASSWORD (env var), and refuses to render at all if no
 password is configured, so it can never be accidentally exposed with no
@@ -18,10 +22,11 @@ by going directly to the URL slug set via ADMIN_URL_PATH.
 """
 
 import os
+import traceback
 
 import streamlit as st
 
-from utils import app_config, theme, training_data
+from utils import app_config, coordinates, crs_utils, file_handler, registry, theme, training_data, traverse, vision_extract
 
 st.set_page_config(page_title="PlotProof Admin", layout="wide")
 st.markdown(theme.get_css(), unsafe_allow_html=True)
@@ -47,7 +52,15 @@ if not st.session_state.get("_admin_authed"):
             st.error("Wrong password.")
     st.stop()
 
-tab_key, tab_review = st.tabs(["API Key", "Extraction Review"])
+tab_key, tab_review, tab_bulk = st.tabs(["API Key", "Extraction Review", "Bulk Add Plans"])
+
+# Files that get skipped from auto-add rather than flagged as an outright
+# failure - anything the main app itself treats as "needs a human to
+# confirm" (see app_home.py's disclaimers) shouldn't be added to a SHARED
+# registry unattended, since other users' overlap checks depend on it
+# being right. A processing exception or zero/insufficient points is a
+# separate "Failed" outcome, handled inline below.
+MAX_BULK_FILES = 30
 
 with tab_key:
     st.subheader("Anthropic API key")
@@ -167,3 +180,99 @@ with tab_review:
             with col_confirmed:
                 st.markdown(f"**User-confirmed points ({len(confirmed_points)})**")
                 st.dataframe(confirmed_points, use_container_width=True, hide_index=True)
+
+with tab_bulk:
+    st.caption(
+        "Upload multiple survey plans at once. Each is auto-extracted the same way the main "
+        "app does, and boundaries that extract as a clean, closed shape with a certain "
+        "coordinate system are added directly to the shared registry (utils/registry.py) - "
+        "only the boundary geometry, same as the main app's opt-in flow, no owner name or "
+        "source document. Anything the extraction itself flags as uncertain (unconfirmed "
+        "datum, beacon order/direction issue, or a boundary that didn't fully close) is "
+        "skipped rather than added unattended - other users' overlap checks depend on this "
+        "data being right, so nothing gets in without either real confidence or a human "
+        "reviewing it through the main flow instead."
+    )
+
+    registry_count_before = registry.count()
+    st.metric("Plots currently in shared registry", registry_count_before)
+
+    use_vision = st.checkbox(
+        "Use AI vision extraction for photos",
+        value=False,
+        help=(
+            "Costs roughly $0.05-0.08 per image on the configured Anthropic API key (same "
+            "vision path as the main app - utils/vision_extract.py). Off by default since a "
+            "large batch of photos adds up fast. PDFs always use free text extraction, "
+            "unaffected by this."
+        ),
+    )
+    if use_vision and not vision_extract.is_available():
+        st.warning("No Anthropic API key configured (see the API Key tab) - photos will fall back to free OCR instead.")
+
+    uploaded_files = st.file_uploader(
+        "Survey plans (PDF or image)",
+        type=["pdf", "png", "jpg", "jpeg"],
+        accept_multiple_files=True,
+    )
+
+    if uploaded_files and len(uploaded_files) > MAX_BULK_FILES:
+        st.error(f"Please upload {MAX_BULK_FILES} files or fewer at a time.")
+    elif uploaded_files and st.button("Process and add to registry", type="primary"):
+        rows = []
+        progress = st.progress(0.0)
+        for i, uploaded_file in enumerate(uploaded_files):
+            filename = uploaded_file.name
+            file_type = os.path.splitext(filename)[1].lstrip(".").lower()
+            row = {"file": filename, "status": None, "detail": None, "points": 0, "plot_ref": None}
+            try:
+                saved_path = file_handler.save_uploaded_file(uploaded_file)
+                points, crs_note, legs_info = None, None, None
+                pdf_path = None
+
+                if file_type in ("png", "jpg", "jpeg") and use_vision and vision_extract.is_available():
+                    points, crs_note, _, legs_info, _ = vision_extract.extract_points_from_image(saved_path)
+                else:
+                    extracted_text, _ = file_handler.extract_text_from_file(saved_path)
+                    pdf_path = saved_path if file_type == "pdf" and file_handler.storage_backend() == "local" else None
+                    points, crs_note, legs_info, _ = coordinates.parse_coordinate_text(extracted_text, pdf_path=pdf_path)
+
+                row["points"] = len(points or [])
+
+                if not points or len(points) < 3:
+                    row["status"] = "Skipped"
+                    row["detail"] = "Not enough points for a real boundary (need 3+)."
+                elif crs_note == "undetected":
+                    row["status"] = "Skipped"
+                    row["detail"] = "Projected coordinates found but couldn't be matched to a known Nigerian CRS."
+                elif crs_utils.crs_is_uncertain(crs_note):
+                    row["status"] = "Skipped"
+                    row["detail"] = "Coordinate system datum wasn't confirmed - needs manual review."
+                elif traverse.traverse_order_uncertain(crs_note):
+                    row["status"] = "Skipped"
+                    row["detail"] = "Beacon order/direction doesn't match the standard convention - needs manual review."
+                elif traverse.boundary_is_approximate(crs_note):
+                    row["status"] = "Skipped"
+                    row["detail"] = "Boundary traverse didn't fully close - needs manual review."
+                else:
+                    plot_ref = registry.add_plot(points)
+                    row["status"] = "Added"
+                    row["detail"] = crs_note or "WGS84 as provided"
+                    row["plot_ref"] = plot_ref
+            except Exception as exc:
+                traceback.print_exc()
+                row["status"] = "Failed"
+                row["detail"] = str(exc)
+            rows.append(row)
+            progress.progress((i + 1) / len(uploaded_files))
+
+        added = sum(1 for r in rows if r["status"] == "Added")
+        skipped = sum(1 for r in rows if r["status"] == "Skipped")
+        failed = sum(1 for r in rows if r["status"] == "Failed")
+        col_a, col_s, col_f = st.columns(3)
+        col_a.metric("Added", added)
+        col_s.metric("Skipped (needs review)", skipped)
+        col_f.metric("Failed", failed)
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+        if added:
+            st.success(f"Added {added} plot(s) to the shared registry - now {registry.count()} total.")

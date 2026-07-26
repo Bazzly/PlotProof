@@ -1,14 +1,18 @@
 """
 Navigation entrypoint - kept deliberately thin.
 
-The actual app content lives in app_home.py; this file only wires up
-st.navigation() with position="hidden" so the admin portal's page is
-reachable by direct URL but never appears in a sidebar nav for public
-visitors to stumble onto (Streamlit's default pages/ auto-discovery would
-otherwise list it as "admin review" for anyone). The URL slug itself comes
-from ADMIN_URL_PATH (env var, not committed - see .env.example) so it
-isn't guessable from reading this public repo either; content access is
-still separately gated by ADMIN_PASSWORD inside pages/admin_review.py.
+The actual app content lives in app_home.py/pages/about.py/pages/faq.py;
+this file only wires up st.navigation(). position="hidden" turns off
+Streamlit's own built-in nav UI (which would otherwise auto-list every
+page, including the admin portal, in a visible sidebar for any visitor) -
+the public-facing sidebar nav visitors actually see (Home / About & Legal
+/ Common Questions) is rendered manually instead, via utils/nav.py's
+render_sidebar(), called from each public page and deliberately omitting
+the admin page. The admin portal is reachable by direct URL only. The URL
+slug comes from ADMIN_URL_PATH (env var, not committed - see
+.env.example) so it isn't guessable from reading this public repo
+either; content access is still separately gated by ADMIN_PASSWORD
+inside pages/admin_review.py.
 
 See ADMIN_ACCESS.md (gitignored, not in this repo) for this deployment's
 actual admin URL and login instructions.
@@ -24,6 +28,8 @@ load_dotenv()
 ADMIN_URL_PATH = os.environ.get("ADMIN_URL_PATH", "admin-review")
 
 home = st.Page("app_home.py", title="PlotProof", default=True)
+about = st.Page("pages/about.py", title="About & Legal", url_path="about")
+faq = st.Page("pages/faq.py", title="Common Questions", url_path="faq")
 admin = st.Page("pages/admin_review.py", title="Admin", url_path=ADMIN_URL_PATH)
 
-st.navigation([home, admin], position="hidden").run()
+st.navigation([home, about, faq, admin], position="hidden").run()

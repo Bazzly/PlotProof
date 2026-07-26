@@ -318,7 +318,26 @@ def extract_points_from_image(
     # convention (see traverse.check_traverse_convention()) before this
     # goes into a note the user sees.
     convention_issue = traverse.check_traverse_convention(points_en)
-    converted, crs_note = crs_utils.resolve_to_wgs84(points_en, declared=declared, forced_epsg=forced_epsg)
+
+    # A diagonal reference - bearing/distance in a straight line from the
+    # origin to the farthest other point - computed purely from the
+    # coordinates just reconstructed above, not read off the plan (real
+    # Nigerian survey plans don't print one - confirmed against real
+    # sample plans, so nothing here depends on the model finding one).
+    diagonal_result = traverse.compute_diagonal(points_en, labels=codes) if len(points_en) >= 3 else None
+
+    # The diagonal's own target point is appended to the same conversion
+    # call (not run through resolve_to_wgs84() separately) so it goes
+    # through the exact same declared/forced/auto-detected CRS as the rest
+    # of the boundary, then split back off - one converted point per input
+    # point, same order, so converted[-1] is always the diagonal's.
+    points_to_convert = points_en + ([diagonal_result["point_en"]] if diagonal_result else [])
+    converted, crs_note = crs_utils.resolve_to_wgs84(points_to_convert, declared=declared, forced_epsg=forced_epsg)
+    if diagonal_result:
+        diag_lat, diag_lon = converted[-1]
+        if -90 <= diag_lat <= 90 and -180 <= diag_lon <= 180:
+            diagonal_result["point_latlon"] = (diag_lat, diag_lon)
+        converted = converted[:-1]
     valid_points = [(lat, lon) for lat, lon in converted if -90 <= lat <= 90 and -180 <= lon <= 180]
 
     # The origin (always vertex 0 - see traverse.walk_traverse()) is what
@@ -338,6 +357,7 @@ def extract_points_from_image(
             "origin_label": f"{easting:.3f}mE / {northing:.3f}mN",
             "origin_latlon": valid_points[0],
             "rows": rows,
+            "diagonal": diagonal_result,
         }
         if rows and valid_points
         else None

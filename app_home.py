@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 from folium.plugins import Fullscreen, MeasureControl
 from streamlit_folium import st_folium
 
-from utils import assistant, crs_utils, document_metadata, file_handler, gis_processing, legal, rate_limit, registry, report_generator, risk_calculator, training_data
+from utils import assistant, crs_utils, document_metadata, file_handler, gis_processing, nav, rate_limit, registry, report_generator, risk_calculator, training_data
 from utils import icons, theme, traverse, vision_extract
 from utils.coordinates import parse_coordinate_text
 
@@ -53,13 +53,6 @@ def show_warning(message: str) -> None:
     st.warning(f"{message} Or [contact PlotProof for a consultation]({WHATSAPP_LINK}).")
 
 
-def crs_is_uncertain(crs_note: Optional[str]) -> bool:
-    """True when the CRS used was a guess (zone stated, datum wasn't) rather
-    than something declared, selected, or matched with certainty - see
-    crs_utils.resolve_to_wgs84()."""
-    return bool(crs_note) and "- assumed" in crs_note
-
-
 def show_crs_disclaimer() -> None:
     st.warning(
         "The coordinate system for this file couldn't be confirmed with certainty - only the "
@@ -69,15 +62,6 @@ def show_crs_disclaimer() -> None:
         f"[@PlotProof]({TWITTER_LINK}) before relying on this result for any transaction or "
         "legal decision."
     )
-
-
-def traverse_order_uncertain(crs_note: Optional[str]) -> bool:
-    """True when traverse.check_traverse_convention() flagged this
-    extraction - a wrong starting beacon or traverse direction doesn't
-    corrupt any individual bearing/distance value, so it's a second,
-    independent source of uncertainty from crs_is_uncertain() above,
-    checked the same way (a marker substring in the same crs_note)."""
-    return bool(crs_note) and "double-check the beacon order" in crs_note
 
 
 def show_traverse_order_disclaimer() -> None:
@@ -113,6 +97,7 @@ def check_can_run_check() -> bool:
 
 st.set_page_config(page_title="PlotProof - Check Your Land Risk", page_icon="assets/logo.svg", layout="centered")
 st.markdown(theme.get_css(), unsafe_allow_html=True)
+nav.render_sidebar()
 
 # ------------------------------
 # LANDING PAGE - the first thing a visitor sees, before the tool itself.
@@ -214,10 +199,7 @@ if not st.session_state.get("_consent_accepted"):
         """,
         unsafe_allow_html=True,
     )
-    with st.expander("Read the full Terms of Service"):
-        st.markdown(legal.get_terms())
-    with st.expander("Read the full Privacy Policy"):
-        st.markdown(legal.get_privacy_policy())
+    st.page_link("pages/about.py", label="Read the full Terms of Service & Privacy Policy", icon="📄")
 
     agreed = st.checkbox("I have read and agree to the Terms of Service and Privacy Policy above.")
     if st.button("Agree & Continue", type="primary", disabled=not agreed):
@@ -367,9 +349,9 @@ def render_document_input(
             if crs_note and crs_note != "undetected":
                 msg += f" Converted from {crs_note} to WGS84."
             st.success(f"{msg} Review below.")
-            if crs_is_uncertain(crs_note):
+            if crs_utils.crs_is_uncertain(crs_note):
                 show_crs_disclaimer()
-            if traverse_order_uncertain(crs_note):
+            if traverse.traverse_order_uncertain(crs_note):
                 show_traverse_order_disclaimer()
         elif crs_note == "undetected":
             show_warning(
@@ -587,10 +569,19 @@ def render_document_input(
                         new_legs.append((bearing, distance))
 
                     origin_latlon = upload_record["auto_detected_points"][0] if upload_record.get("auto_detected_points") else None
-                    new_points, closed = None, False
+                    new_points, closed, new_diagonal = None, False, None
                     if all_parsed and origin_latlon and len(new_legs) >= 3:
-                        new_points, closed = traverse.resolve_recomputed_points(
-                            legs_info["origin_en"], origin_latlon, new_legs
+                        # Per-vertex labels (not per-line) for the diagonal's
+                        # target - each row's "beacon" describes the LINE
+                        # from this vertex to the next ("PL1 → PL2" or a
+                        # real beacon code), so its first half is this row's
+                        # own vertex identifier.
+                        vertex_labels = [
+                            row["beacon"].split(" → ")[0] if " → " in (row.get("beacon") or "") else f"PL{i + 1}"
+                            for i, row in enumerate(final_rows)
+                        ]
+                        new_points, closed, new_diagonal = traverse.resolve_recomputed_points(
+                            legs_info["origin_en"], origin_latlon, new_legs, labels=vertex_labels
                         )
 
                     if new_points and len(new_points) >= 3:
@@ -599,6 +590,9 @@ def render_document_input(
                         # working (see its docstring) - the CRS itself hasn't
                         # changed, just the boundary shape within it.
                         upload_record["auto_detected_points"] = new_points
+                        # Otherwise the diagonal card below would keep
+                        # showing the pre-edit boundary's diagonal.
+                        legs_info["diagonal"] = new_diagonal
                         if not closed:
                             show_warning(
                                 "Updated the boundary from your edits, but it doesn't fully close - common "
@@ -612,6 +606,28 @@ def render_document_input(
                         )
                     else:
                         show_warning("At least 3 boundary legs are needed to build a shape.")
+
+            diagonal = legs_info.get("diagonal")
+            if diagonal:
+                coord_line = ""
+                if diagonal.get("point_latlon"):
+                    diag_lat, diag_lon = diagonal["point_latlon"]
+                    coord_line = f"<p>Coordinate: <strong>{diag_lat:.6f}, {diag_lon:.6f}</strong></p>"
+                st.markdown(
+                    f"""
+                    <div class="pp-card">
+                      <div class="pp-card-title">Diagonal Check</div>
+                      <p>A straight-line distance and bearing from the origin (PL1) to the farthest
+                      corner, calculated directly from the boundary above - not read from your
+                      document (most plans don't print one), a reference you can pace out on-site
+                      to sanity-check the plot's extent.</p>
+                      <p><strong>PL1 → {diagonal['target_label']}: {traverse.format_bearing(diagonal['bearing'])}
+                      · {diagonal['distance_m']:.2f}m</strong></p>
+                      {coord_line}
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
         st.caption("One point per line: latitude, longitude. Add all boundary corners (3+) for an accurate plot outline.")
         coordinates_text = st.text_area(
@@ -661,16 +677,6 @@ PURCHASE_CHECKLIST = [
     "Confirm there's no existing encumbrance, lien, or dispute registered against the property",
 ]
 
-RISK_EXPLAINER = {
-    "Low": "No known conflicts were found. This is a good sign, though it only reflects plots "
-    "that are currently on record - it isn't a guarantee.",
-    "Medium": "Something here is worth a closer look before you commit - either your boundary "
-    "sits close to another plot, or there wasn't enough data to be fully certain.",
-    "High": "Your boundary overlaps a plot that's already on record. This is a serious conflict "
-    "that needs to be resolved before any transaction.",
-}
-
-
 def _risk_reason(result: dict) -> str:
     """One plain-English sentence naming the specific, primary driver of this
     result - mirrors utils/risk_calculator.py's own risk_level branching so it
@@ -710,9 +716,9 @@ def render_results(
             {crs_note} to WGS84 for analysis.</div>""",
             unsafe_allow_html=True,
         )
-        if crs_is_uncertain(crs_note):
+        if crs_utils.crs_is_uncertain(crs_note):
             show_crs_disclaimer()
-        if traverse_order_uncertain(crs_note):
+        if traverse.traverse_order_uncertain(crs_note):
             show_traverse_order_disclaimer()
 
     geometry_issue = gis_processing.check_boundary_validity(points)
@@ -740,7 +746,7 @@ def render_results(
         unsafe_allow_html=True,
     )
     with st.expander("What does this risk level mean?"):
-        st.markdown(RISK_EXPLAINER[risk_level])
+        st.markdown(theme.RISK_EXPLAINER[risk_level])
 
     if assistant.is_available():
         history_key = f"_assistant_history_{key_prefix}"
@@ -1020,43 +1026,6 @@ def render_results(
 
 
 # ------------------------------
-# HELP PANEL - a short, static FAQ answering what a first-time,
-# non-surveyor visitor is most likely to wonder, placed right where
-# they're about to start rather than buried in a footer. Hand-written
-# answers, not a live model call - fixed and reviewable, no per-question
-# API cost, and can't drift or hallucinate.
-# ------------------------------
-with st.expander("Common Questions - New to Land Surveys?"):
-    st.markdown(
-        f"""
-**What is a survey plan?**
-The official document a licensed surveyor produces after measuring your land - it shows your
-plot's boundary, corner coordinates, and size. It's what PlotProof reads to check your boundary.
-
-**What are coordinates?**
-Numbers that pinpoint each corner of your land on a map - usually latitude/longitude, or a local
-Easting/Northing pair tied to a specific coordinate system. Your survey plan normally lists these
-for every corner ("beacon").
-
-**Why might my land get flagged?**
-- **Low risk** - {RISK_EXPLAINER['Low']}
-- **Medium risk** - {RISK_EXPLAINER['Medium']}
-- **High risk** - {RISK_EXPLAINER['High']}
-
-**Can I buy this land?**
-PlotProof isn't a legal opinion and can't answer that directly. A Low risk result is a good sign,
-but it only reflects plots currently on record - always get a licensed surveyor's verification and
-proper legal due diligence (e.g. a title search) before any transaction.
-
-**What's in my downloaded report?**
-The PDF includes your boundary coordinates, the risk level, the specific findings behind it,
-recommendations, and a map showing your plot against nearby registered plots - bring it to a
-licensed surveyor if you want a professional opinion on it. CSV and GeoJSON downloads (the raw
-coordinates/boundary, no formatting) are also available after a check completes.
-        """
-    )
-
-# ------------------------------
 # MODE SELECTOR
 # ------------------------------
 mode = st.radio(
@@ -1115,9 +1084,9 @@ if mode == "Check my land against known plots":
                     converted from {preview_crs_note} to WGS84.</div>""",
                     unsafe_allow_html=True,
                 )
-            if crs_is_uncertain(preview_crs_note):
+            if crs_utils.crs_is_uncertain(preview_crs_note):
                 show_crs_disclaimer()
-            if traverse_order_uncertain(preview_crs_note):
+            if traverse.traverse_order_uncertain(preview_crs_note):
                 show_traverse_order_disclaimer()
 
             col_back, col_next = st.columns([1, 2])
@@ -1278,9 +1247,9 @@ else:
                 """,
                 unsafe_allow_html=True,
             )
-            if crs_is_uncertain(crs_a) or crs_is_uncertain(crs_b):
+            if crs_utils.crs_is_uncertain(crs_a) or crs_utils.crs_is_uncertain(crs_b):
                 show_crs_disclaimer()
-            if traverse_order_uncertain(crs_a) or traverse_order_uncertain(crs_b):
+            if traverse.traverse_order_uncertain(crs_a) or traverse.traverse_order_uncertain(crs_b):
                 show_traverse_order_disclaimer()
 
             col_back, col_next = st.columns([1, 2])
@@ -1400,7 +1369,4 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-with st.expander("Terms of Service & Privacy Policy"):
-    st.markdown(legal.get_terms())
-    st.divider()
-    st.markdown(legal.get_privacy_policy())
+st.page_link("pages/about.py", label="Terms of Service & Privacy Policy", icon="📄")

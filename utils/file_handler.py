@@ -89,6 +89,12 @@ def save_uploaded_file(uploaded_file) -> str:
         client.storage.from_("survey-uploads").upload(filename, file_bytes)
         return f"supabase://survey-uploads/{filename}"
 
+    # Re-asserted here, not just at module import - a long-running process
+    # (Streamlit doesn't reload utils/ modules between reruns) would
+    # otherwise keep writing to a directory that's since been deleted out
+    # from under it (log rotation, a deploy reset, manual cleanup) with no
+    # way to recover short of a process restart.
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     dest = UPLOAD_DIR / filename
     dest.write_bytes(file_bytes)
     return str(dest)

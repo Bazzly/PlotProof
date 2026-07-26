@@ -85,6 +85,11 @@ def _read_local_usage() -> dict:
 
 
 def _write_local_usage(data: dict) -> None:
+    # Re-asserted here, not just at module import - a long-running process
+    # (Streamlit doesn't reload utils/ modules between reruns) would
+    # otherwise keep failing to write once this directory's been deleted
+    # out from under it, with no way to recover short of a process restart.
+    RATE_LIMIT_DIR.mkdir(parents=True, exist_ok=True)
     USAGE_FILE.write_text(json.dumps(data, indent=2))
 
 

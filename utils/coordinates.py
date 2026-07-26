@@ -109,7 +109,10 @@ def _parse_pairs(text: str) -> Tuple[List[Tuple[float, float]], List[Tuple[float
 
 
 def _legs_info(
-    origin_en: Tuple[float, float], origin_latlon: Tuple[float, float], legs: List[Tuple[float, float]]
+    origin_en: Tuple[float, float],
+    origin_latlon: Tuple[float, float],
+    legs: List[Tuple[float, float]],
+    diagonal: Optional[dict] = None,
 ) -> dict:
     """Bundles a traverse's raw legs into the shape app_home.py's editable
     bearing/distance table expects (see also vision_extract.py, which
@@ -122,7 +125,14 @@ def _legs_info(
     separately - always vertex 0 of the resulting boundary and what every
     other point is calculated from, so the UI can show it distinctly
     above the leg table rather than leaving it as just the first,
-    unlabeled line of the coordinates box."""
+    unlabeled line of the coordinates box.
+
+    diagonal: traverse.diagonal_check_result()'s dict, when the plan
+    stated a diagonal check measurement and it was cross-checked - kept
+    alongside the legs (rather than only folded into crs_note as text) so
+    app_home.py can render it as its own labeled "Diagonal Check" element
+    next to the bearing/distance review it validates, instead of it being
+    buried inside a longer paragraph of CRS/convention notes."""
     n = len(legs)
     easting, northing = origin_en
     return {
@@ -137,6 +147,7 @@ def _legs_info(
             }
             for i, (bearing, distance) in enumerate(legs)
         ],
+        "diagonal": diagonal,
     }
 
 
@@ -226,7 +237,22 @@ def parse_coordinate_text(
             # catch it - check separately against the standard north-start,
             # clockwise convention before this goes into a note the user sees.
             convention_issue = traverse.check_traverse_convention(polygon_en)
-            converted, crs_note = crs_utils.resolve_to_wgs84(polygon_en, declared=declared, forced_epsg=forced_epsg)
+            diagonal_result = (
+                traverse.compute_diagonal(polygon_en, labels=[f"PL{i + 1}" for i in range(len(polygon_en))])
+                if legs
+                else None
+            )
+            # The diagonal's own target point rides along in the same
+            # conversion call (not a separate resolve_to_wgs84() run) so it
+            # goes through the exact same declared/forced/auto-detected CRS
+            # as the rest of the boundary, then splits back off.
+            points_to_convert = polygon_en + ([diagonal_result["point_en"]] if diagonal_result else [])
+            converted, crs_note = crs_utils.resolve_to_wgs84(points_to_convert, declared=declared, forced_epsg=forced_epsg)
+            if diagonal_result:
+                diag_point = converted[-1]
+                if is_valid_latlon(*diag_point):
+                    diagonal_result["point_latlon"] = diag_point
+                converted = converted[:-1]
             valid_points = [p for p in converted if is_valid_latlon(*p)]
             if len(valid_points) >= 3:
                 note = f"boundary reconstructed from {method}"
@@ -237,7 +263,8 @@ def parse_coordinate_text(
                         "order and starting point below against your original document"
                     )
                 crs_note = f"{crs_note}; {note}" if crs_note else note
-                return valid_points, crs_note, (_legs_info(origin_en, valid_points[0], legs) if legs else None), doc_info
+                legs_info = _legs_info(origin_en, valid_points[0], legs, diagonal_result) if legs else None
+                return valid_points, crs_note, legs_info, doc_info
 
         # Strict reconstruction failed (didn't close, or area mismatch) -
         # for old or hand-surveyed plans this is common even when every
@@ -250,7 +277,16 @@ def parse_coordinate_text(
             open_polygon_en, closure_error = traverse.build_open_polygon(origin_en, legs)
             if open_polygon_en:
                 convention_issue = traverse.check_traverse_convention(open_polygon_en)
-                converted, crs_note = crs_utils.resolve_to_wgs84(open_polygon_en, declared=declared, forced_epsg=forced_epsg)
+                diagonal_result = traverse.compute_diagonal(
+                    open_polygon_en, labels=[f"PL{i + 1}" for i in range(len(open_polygon_en))]
+                )
+                points_to_convert = open_polygon_en + ([diagonal_result["point_en"]] if diagonal_result else [])
+                converted, crs_note = crs_utils.resolve_to_wgs84(points_to_convert, declared=declared, forced_epsg=forced_epsg)
+                if diagonal_result:
+                    diag_point = converted[-1]
+                    if is_valid_latlon(*diag_point):
+                        diagonal_result["point_latlon"] = diag_point
+                    converted = converted[:-1]
                 valid_points = [p for p in converted if is_valid_latlon(*p)]
                 if len(valid_points) >= 3:
                     note = (
@@ -264,7 +300,7 @@ def parse_coordinate_text(
                             "the beacon order and starting point too"
                         )
                     crs_note = f"{crs_note}; {note}" if crs_note else note
-                    return valid_points, crs_note, _legs_info(origin_en, valid_points[0], legs), doc_info
+                    return valid_points, crs_note, _legs_info(origin_en, valid_points[0], legs, diagonal_result), doc_info
 
         # Not even an open shape was possible (fewer than 3 legs). Still
         # expose any raw legs we did parse so the UI can offer a chance to

@@ -75,6 +75,11 @@ def record_example(
         client.table("training_examples").insert(record).execute()
         return
 
+    # Re-asserted here, not just at module import - a long-running process
+    # (Streamlit doesn't reload utils/ modules between reruns) would
+    # otherwise keep failing to write once this directory's been deleted
+    # out from under it, with no way to recover short of a process restart.
+    TRAINING_DATA_DIR.mkdir(parents=True, exist_ok=True)
     dest = TRAINING_DATA_DIR / f"{record['id']}.json"
     dest.write_text(json.dumps(record, indent=2))
 

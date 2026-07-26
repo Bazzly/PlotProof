@@ -43,6 +43,18 @@ GOLD_INK = "#201308"
 RISK_TO_STATUS = {"Low": "good", "Medium": "warning", "High": "critical"}
 RISK_TO_ICON = {"Low": "check-circle", "Medium": "alert-triangle", "High": "alert-octagon"}
 
+# Shared between the results page's "What does this risk level mean?"
+# expander and the sidebar FAQ (utils/nav.py) - one copy so the two can
+# never end up disagreeing about what a risk level means.
+RISK_EXPLAINER = {
+    "Low": "No known conflicts were found. This is a good sign, though it only reflects plots "
+    "that are currently on record - it isn't a guarantee.",
+    "Medium": "Something here is worth a closer look before you commit - either your boundary "
+    "sits close to another plot, or there wasn't enough data to be fully certain.",
+    "High": "Your boundary overlaps a plot that's already on record. This is a serious conflict "
+    "that needs to be resolved before any transaction.",
+}
+
 # Light-mode chrome/ink tokens, factored out so anything that only ever
 # renders on a white background (the PDF report - paper doesn't have a
 # dark mode) can match the app's palette instead of hardcoding its own.
@@ -264,6 +276,26 @@ def get_css() -> str:
   margin-top: 14px;
 }}
 .pp-wizard-connector--done {{ background: var(--pp-accent); }}
+
+/* ---- sidebar nav (utils/nav.py, every public page) ---- */
+[data-testid="stSidebar"] {{
+  background: var(--pp-surface);
+  border-right: 1px solid var(--pp-border);
+}}
+.pp-sidebar-brand {{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: var(--pp-space-4);
+  font-family: var(--pp-font-heading);
+  font-weight: 600;
+  font-size: 1.05rem;
+  color: var(--pp-ink-primary);
+}}
+.pp-sidebar-brand .pp-logo {{ width: 32px; height: 32px; border-radius: 10px; flex-shrink: 0; }}
+[data-testid="stSidebar"] [data-testid="stPageLink"] {{
+  border-radius: var(--pp-radius);
+}}
 
 /* ---- hero header ---- */
 .pp-hero {{

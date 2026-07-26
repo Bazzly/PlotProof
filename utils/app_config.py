@@ -76,6 +76,11 @@ def set_setting(key: str, value: str) -> None:
 
     data = _read_local()
     data[key] = value
+    # Re-asserted here, not just at module import - a long-running process
+    # (Streamlit doesn't reload utils/ modules between reruns) would
+    # otherwise keep failing to write once this directory's been deleted
+    # out from under it, with no way to recover short of a process restart.
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_FILE.write_text(json.dumps(data, indent=2))
 
 
@@ -89,6 +94,7 @@ def clear_setting(key: str) -> None:
 
     data = _read_local()
     data.pop(key, None)
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_FILE.write_text(json.dumps(data, indent=2))
 
 

@@ -59,6 +59,11 @@ def _load_local_records() -> list:
 
 
 def _save_local_records(records: list) -> None:
+    # Re-asserted here, not just at module import - a long-running process
+    # (Streamlit doesn't reload utils/ modules between reruns) would
+    # otherwise keep failing to write once this directory's been deleted
+    # out from under it, with no way to recover short of a process restart.
+    REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
     REGISTRY_FILE.write_text(json.dumps(records, indent=2))
 
 

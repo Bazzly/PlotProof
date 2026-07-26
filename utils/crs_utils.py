@@ -124,6 +124,15 @@ def detect_crs(pairs_en: List[Tuple[float, float]]) -> Optional[Tuple[str, str]]
     return None
 
 
+def crs_is_uncertain(crs_note: Optional[str]) -> bool:
+    """True when the CRS used was a guess (zone stated, datum wasn't) rather
+    than something declared, selected, or matched with certainty - see
+    resolve_to_wgs84()'s docstring for the exact note text this checks.
+    Shared by the main app (its own disclaimer) and the admin bulk-add tool
+    (whether to auto-add to the shared registry unattended)."""
+    return bool(crs_note) and "- assumed" in crs_note
+
+
 def convert_pairs(pairs_en: List[Tuple[float, float]], epsg: str) -> List[Tuple[float, float]]:
     """Converts (easting, northing) pairs in the given CRS to (lat, lon) WGS84."""
     transformer = Transformer.from_crs(epsg, "EPSG:4326", always_xy=True)
