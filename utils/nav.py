@@ -55,15 +55,19 @@ def render_floating_chat() -> None:
     report-grounded assistant and the rest of the app's paid-adjacent
     features.
 
-    The whole body is wrapped in a try/except - confirmed live (not
+    The whole function - including the gating checks below, not just the
+    render body - is wrapped in try/except - confirmed live (not
     hypothetical) that an unhandled error in here takes down every single
     page load for every visitor, since app.py's st.navigation().run()
     executes this at module level before the rest of the page renders.
     An optional add-on feature failing should never do that; it logs and
-    silently doesn't render instead."""
-    if not assistant.is_available() or not st.session_state.get("_consent_accepted"):
-        return
+    silently doesn't render instead. (An earlier version of this fix only
+    wrapped the render body, leaving assistant.is_available() itself able
+    to escape uncaught - moved inside the try too, since it's cheap
+    insurance even though it isn't known to actually raise.)"""
     try:
+        if not assistant.is_available() or not st.session_state.get("_consent_accepted"):
+            return
         _render_floating_chat_body()
     except Exception:
         traceback.print_exc()
