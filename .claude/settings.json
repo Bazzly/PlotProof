@@ -76,7 +76,19 @@
       "Bash(pkill -f \"streamlit run _test_no_popover.py --server.headless true --server.port 8537\")",
       "Bash(lsof -i :8536 -sTCP:LISTEN -t)",
       "Bash(lsof -i :8537 -sTCP:LISTEN -t)",
-      "Bash(git fetch *)"
+      "Bash(git fetch *)",
+      "Bash(/Users/GEOTECHIEX/Sites/landSuite/.venv/bin/python -c ' *)",
+      "Bash(git stash *)",
+      "Bash(/Users/GEOTECHIEX/Sites/landSuite/.venv/bin/python /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/verify_land_chat.py)",
+      "Bash(/Users/GEOTECHIEX/Sites/landSuite/.venv/bin/python /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/verify_admin_tab.py)",
+      "Bash(ADMIN_PASSWORD=testpass123 .venv/bin/streamlit run app.py --server.headless true --server.port 8529)",
+      "Bash(disown)",
+      "Bash(mkdir -p /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/minirepro)",
+      "Bash(cat)",
+      "Bash(/Users/GEOTECHIEX/Sites/landSuite/.venv/bin/streamlit run *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8530/admin-review)",
+      "Bash(/Users/GEOTECHIEX/Sites/landSuite/.venv/bin/python /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/verify_admin_tab2.py)",
+      "Bash(/Users/GEOTECHIEX/Sites/landSuite/.venv/bin/python /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/verify_floating_chat.py)"
     ]
   }
 }

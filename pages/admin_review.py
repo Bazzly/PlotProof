@@ -13,6 +13,12 @@ Admin portal:
      utils/registry.py) - lets an admin seed real coverage for an area
      (e.g. plans they have legitimate access to) faster than waiting for
      individual users to opt in one plot at a time via the main flow.
+  4. Train the floating "land chat" (see utils/land_chat_training.py,
+     utils/land_chat_match.py, utils/nav.py's render_floating_chat()) by
+     adding/editing/deleting free-text passages it matches visitor
+     questions against - no external API involved in that chat at all,
+     by design, so it can't go down the way the old Claude-backed
+     version repeatedly did.
 
 Gated behind ADMIN_PASSWORD (env var), and refuses to render at all if no
 password is configured, so it can never be accidentally exposed with no
@@ -26,7 +32,20 @@ import traceback
 
 import streamlit as st
 
-from utils import app_config, coordinates, crs_utils, file_handler, registry, theme, training_data, traverse, vision_extract
+from utils import (
+    app_config,
+    coordinates,
+    crs_utils,
+    faq_content,
+    file_handler,
+    land_chat_match,
+    land_chat_training,
+    registry,
+    theme,
+    training_data,
+    traverse,
+    vision_extract,
+)
 
 st.set_page_config(page_title="PlotProof Admin", layout="wide")
 st.markdown(theme.get_css(), unsafe_allow_html=True)
@@ -52,7 +71,9 @@ if not st.session_state.get("_admin_authed"):
             st.error("Wrong password.")
     st.stop()
 
-tab_key, tab_review, tab_bulk = st.tabs(["API Key", "Extraction Review", "Bulk Add Plans"])
+tab_key, tab_review, tab_bulk, tab_chat = st.tabs(
+    ["API Key", "Extraction Review", "Bulk Add Plans", "Land Chat Training"]
+)
 
 # Files that get skipped from auto-add rather than flagged as an outright
 # failure - anything the main app itself treats as "needs a human to
@@ -276,3 +297,65 @@ with tab_bulk:
         st.dataframe(rows, use_container_width=True, hide_index=True)
         if added:
             st.success(f"Added {added} plot(s) to the shared registry - now {registry.count()} total.")
+
+with tab_chat:
+    st.caption(
+        "Trains the floating land chat every visitor sees (utils/nav.py) - it answers purely "
+        "from the passages below, verbatim, with no external API call and no conversational "
+        "memory. Write short, focused passages (a paragraph or two, one topic each) rather "
+        "than one giant document - the chat always returns whichever single passage matches "
+        "a question best."
+    )
+
+    passages = land_chat_training.list_passages()
+    st.metric("Trained passages", len(passages))
+
+    if not passages:
+        st.info("Nothing trained yet - the floating chat stays hidden until at least one passage exists.")
+        if st.button("Seed starter content from the FAQ page"):
+            for question, answer in faq_content.FAQ_ENTRIES:
+                land_chat_training.add_passage(question, answer)
+            st.success(f"Added {len(faq_content.FAQ_ENTRIES)} starter passage(s).")
+            st.rerun()
+
+    st.divider()
+    st.markdown("**Test a question**")
+    test_question = st.text_input("Ask a question the way a visitor would", key="_admin_chat_test_q")
+    if test_question:
+        ranked = land_chat_match.rank_passages(test_question)
+        for entry in ranked[:5]:
+            score = entry["score"]
+            flag = " (low confidence)" if score < land_chat_match.LOW_CONFIDENCE_THRESHOLD else ""
+            st.caption(f"{score:.3f}{flag} - {entry['passage'].get('title') or '(untitled)'}")
+
+    st.divider()
+    st.markdown("**Add a passage**")
+    with st.form("add_land_chat_passage", clear_on_submit=True):
+        new_title = st.text_input("Title (helps matching and your own organization)")
+        new_text = st.text_area("Passage text - shown to visitors verbatim", height=140)
+        if st.form_submit_button("Add passage", type="primary"):
+            if new_text.strip():
+                land_chat_training.add_passage(new_title, new_text)
+                st.success("Passage added.")
+                st.rerun()
+            else:
+                st.error("Enter passage text before saving.")
+
+    if passages:
+        st.divider()
+        st.markdown("**Existing passages**")
+        for passage in passages:
+            label = passage.get("title") or (passage.get("text", "")[:60])
+            with st.expander(label):
+                edited_title = st.text_input("Title", value=passage.get("title", ""), key=f"lc_title_{passage['id']}")
+                edited_text = st.text_area(
+                    "Text", value=passage.get("text", ""), height=140, key=f"lc_text_{passage['id']}"
+                )
+                col_save, col_delete = st.columns(2)
+                if col_save.button("Save changes", key=f"lc_save_{passage['id']}"):
+                    land_chat_training.update_passage(passage["id"], edited_title, edited_text)
+                    st.success("Saved.")
+                    st.rerun()
+                if col_delete.button("Delete", key=f"lc_delete_{passage['id']}"):
+                    land_chat_training.delete_passage(passage["id"])
+                    st.rerun()

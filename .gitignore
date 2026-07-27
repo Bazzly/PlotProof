@@ -7,6 +7,7 @@ data/training_examples/
 data/registry/
 data/config/
 data/rate_limits/
+data/land_chat/
 .streamlit/secrets.toml
 ADMIN_ACCESS.md
 /product

@@ -1,33 +1,30 @@
 """
-Two Q&A assistants, both scoped narrowly rather than general chatbots:
-
-  - ask() - grounded in the user's own, already-computed result (risk
-    level, findings, coordinates). Used by the "Ask about this report"
-    expander on the results page (see app_home.py).
-  - ask_general() - no specific result to ground in; answers general
-    questions about Nigerian land/surveys and about PlotProof itself.
-    Used by the floating chat (utils/nav.py's render_floating_chat()),
-    available from every page. Explicitly instructed not to claim
-    anything about "your land" specifically, since it has no document to
-    read - that's the whole reason the floating chat always points back
-    to the real upload/coordinates flow instead of trying to answer
-    plot-specific questions itself.
-
-Uses the same Claude client/API key resolution as utils/vision_extract.py
+ask() - the "Ask about this report" assistant, grounded in the user's own
+already-computed result (risk level, findings, coordinates). Used by the
+expander on the results page (see app_home.py). Uses the same Claude
+client/API key resolution as utils/vision_extract.py
 (utils/app_config.py's admin-override-then-env-var lookup). Text-only, no
 image, so a single non-streaming call is fine for the short answers this
 produces.
 
-Both raise on failure (network error, rate limit, or - confirmed as a
-real recurring failure mode for this project - the account's credit
-balance running out) rather than swallowing the exception; callers
-already wrap each call in a try/except (see app_home.py, utils/nav.py)
-and now use fallback_answer() below when it fails, instead of a dead-end
-"something went wrong" with no useful next step.
+Raises on failure (network error, rate limit, or - confirmed as a real
+recurring failure mode for this project - the account's credit balance
+running out) rather than swallowing the exception; app_home.py already
+wraps the call in a try/except and uses fallback_answer() below when it
+fails, instead of a dead-end "something went wrong" with no useful next
+step.
+
+The floating land chat used to be a second, general-purpose assistant
+here (ask_general()) - it's since been replaced by an entirely local,
+admin-trained match against static content (utils/land_chat_match.py,
+utils/land_chat_training.py) with no external API involved, so it can't
+go down the way this one repeatedly did. fallback_answer() below is
+unrelated to that change - it's this module's own offline fallback for
+when the report-grounded ask() above fails.
 """
 
 import re
-from typing import List, Optional, Tuple
+from typing import Optional
 
 import anthropic
 
@@ -55,30 +52,6 @@ redirect to what you can help with.
 
 Report data:
 {report_context}"""
-
-
-_GENERAL_SYSTEM_PROMPT = """You are PlotProof's floating chat assistant, available on every page of the \
-site. Answer only two kinds of questions:
-
-1. General questions about Nigerian land, surveys, and property ownership - what a survey plan is, \
-what a Certificate of Occupancy is, common land-fraud patterns, what "beacon"/"coordinates"/"boundary \
-overlap" mean, what to check before buying land, how to engage a licensed surveyor, and similar. \
-General education, not advice about any specific plot.
-2. Questions about what PlotProof itself does and how to use it - the instant risk check, comparing \
-two specific plots directly, uploading a survey plan (PDF or photo) vs. typing coordinates by hand, \
-the downloadable PDF/CSV/GeoJSON report, the bearing/distance review table, the diagonal check.
-
-Rules:
-- Keep answers short - 2-4 sentences, plain English, no unexplained jargon.
-- You have no document, coordinates, or result for this specific user - you cannot see any land \
-they own or have checked. Never state or imply anything about "your land" or "your plot" \
-specifically. If asked something like "is my land safe" or "should I buy this plot", explain that \
-this needs their actual survey plan or coordinates run through the real check, not general chat.
-- If asked something with no connection to land, property, surveying, or PlotProof, politely decline \
-and redirect to what you can help with instead.
-- End on a natural note encouraging them to try the actual check (upload a survey plan or enter \
-coordinates) rather than just chatting - but vary the phrasing, don't repeat a canned sentence \
-verbatim every time."""
 
 
 def is_available() -> bool:
@@ -164,29 +137,5 @@ def ask(question: str, context: dict) -> str:
         max_tokens=400,
         system=_SYSTEM_PROMPT.format(report_context=_build_context(context)),
         messages=[{"role": "user", "content": question}],
-    )
-    return next(b.text for b in response.content if b.type == "text")
-
-
-def ask_general(question: str, history: Optional[List[Tuple[str, str]]] = None) -> str:
-    """history: recent (question, answer) pairs, oldest first - sent as
-    real prior turns (not just summarized in text) so the floating chat
-    can hold an actual back-and-forth, e.g. a follow-up "what about..."
-    referring to the previous answer. Callers only need to pass the last
-    few exchanges; unlike ask() above there's no per-report data to stay
-    grounded in, so there's no correctness reason to cap this tightly -
-    it's capped by the caller purely to bound token cost."""
-    client = anthropic.Anthropic(api_key=app_config.get_anthropic_api_key())
-    messages = []
-    for prior_question, prior_answer in history or []:
-        messages.append({"role": "user", "content": prior_question})
-        messages.append({"role": "assistant", "content": prior_answer})
-    messages.append({"role": "user", "content": question})
-
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=400,
-        system=_GENERAL_SYSTEM_PROMPT,
-        messages=messages,
     )
     return next(b.text for b in response.content if b.type == "text")

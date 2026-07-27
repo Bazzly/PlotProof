@@ -804,11 +804,7 @@ def render_results(
                 traceback.print_exc()
                 fallback = assistant.fallback_answer(question)
                 if fallback:
-                    answer = (
-                        f"{fallback}\n\n*(The AI assistant is temporarily unavailable, so this is "
-                        "from our [Common Questions](faq) page rather than an answer about your "
-                        "specific report.)*"
-                    )
+                    answer = fallback
                 else:
                     answer = (
                         "The AI assistant is temporarily unavailable right now. Check the "
