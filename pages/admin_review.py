@@ -125,82 +125,83 @@ with tab_review:
 
     if not records:
         st.info("No training examples recorded yet.")
-        st.stop()
+    else:
+        # ---- summary metrics ----
+        total = len(records)
+        failures = [r for r in records if not r.get("auto_detected_points")]
+        corrected = [r for r in records if r.get("was_corrected")]
 
-    # ---- summary metrics ----
-    total = len(records)
-    failures = [r for r in records if not r.get("auto_detected_points")]
-    corrected = [r for r in records if r.get("was_corrected")]
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total examples", total)
+        col2.metric(
+            "Zero points detected", len(failures), help="Extraction found nothing at all - the worst failure mode."
+        )
+        col3.metric("User corrected", len(corrected), help="Auto-detected points differed from what the user confirmed.")
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total examples", total)
-    col2.metric("Zero points detected", len(failures), help="Extraction found nothing at all - the worst failure mode.")
-    col3.metric("User corrected", len(corrected), help="Auto-detected points differed from what the user confirmed.")
+        # ---- filters ----
+        methods = sorted({r.get("extraction_method", "unknown") for r in records})
+        col_a, col_b, col_c = st.columns([2, 1, 1])
+        with col_a:
+            method_filter = st.multiselect("Extraction method", methods, default=methods)
+        with col_b:
+            failures_only = st.checkbox("Failures only (zero points)")
+        with col_c:
+            corrected_only = st.checkbox("Corrected only")
 
-    # ---- filters ----
-    methods = sorted({r.get("extraction_method", "unknown") for r in records})
-    col_a, col_b, col_c = st.columns([2, 1, 1])
-    with col_a:
-        method_filter = st.multiselect("Extraction method", methods, default=methods)
-    with col_b:
-        failures_only = st.checkbox("Failures only (zero points)")
-    with col_c:
-        corrected_only = st.checkbox("Corrected only")
+        filtered = [r for r in records if r.get("extraction_method", "unknown") in method_filter]
+        if failures_only:
+            filtered = [r for r in filtered if not r.get("auto_detected_points")]
+        if corrected_only:
+            filtered = [r for r in filtered if r.get("was_corrected")]
 
-    filtered = [r for r in records if r.get("extraction_method", "unknown") in method_filter]
-    if failures_only:
-        filtered = [r for r in filtered if not r.get("auto_detected_points")]
-    if corrected_only:
-        filtered = [r for r in filtered if r.get("was_corrected")]
+        st.caption(f"Showing {len(filtered)} of {total} example(s).")
 
-    st.caption(f"Showing {len(filtered)} of {total} example(s).")
+        for record in filtered:
+            auto_points = record.get("auto_detected_points") or []
+            confirmed_points = record.get("user_confirmed_points") or []
+            method = record.get("extraction_method", "unknown")
 
-    for record in filtered:
-        auto_points = record.get("auto_detected_points") or []
-        confirmed_points = record.get("user_confirmed_points") or []
-        method = record.get("extraction_method", "unknown")
+            badges = [method]
+            if not auto_points:
+                badges.append("ZERO POINTS")
+            if record.get("was_corrected"):
+                badges.append("corrected")
 
-        badges = [method]
-        if not auto_points:
-            badges.append("ZERO POINTS")
-        if record.get("was_corrected"):
-            badges.append("corrected")
+            title = f"{record.get('timestamp', '?')} - {record.get('file_type', '?')} - {' | '.join(badges)}"
 
-        title = f"{record.get('timestamp', '?')} - {record.get('file_type', '?')} - {' | '.join(badges)}"
+            with st.expander(title):
+                left, right = st.columns([1, 1])
 
-        with st.expander(title):
-            left, right = st.columns([1, 1])
+                with left:
+                    source_ref = record.get("source_file_ref")
+                    file_type = record.get("file_type")
+                    if source_ref and file_type in ("png", "jpg", "jpeg") and os.path.isfile(source_ref):
+                        st.image(source_ref, use_container_width=True)
+                    elif source_ref:
+                        st.caption(f"Source: {source_ref}")
+                    else:
+                        st.caption("No source file reference stored.")
 
-            with left:
-                source_ref = record.get("source_file_ref")
-                file_type = record.get("file_type")
-                if source_ref and file_type in ("png", "jpg", "jpeg") and os.path.isfile(source_ref):
-                    st.image(source_ref, use_container_width=True)
-                elif source_ref:
-                    st.caption(f"Source: {source_ref}")
-                else:
-                    st.caption("No source file reference stored.")
+                    st.markdown("**Auto-detected CRS note**")
+                    st.code(record.get("auto_detected_crs_note") or "(none)", language=None)
 
-                st.markdown("**Auto-detected CRS note**")
-                st.code(record.get("auto_detected_crs_note") or "(none)", language=None)
+                with right:
+                    st.markdown("**Extracted text / vision summary**")
+                    st.text_area(
+                        "raw_extracted_text",
+                        value=record.get("raw_extracted_text") or "(empty)",
+                        height=180,
+                        label_visibility="collapsed",
+                        key=f"raw_{record['id']}",
+                    )
 
-            with right:
-                st.markdown("**Extracted text / vision summary**")
-                st.text_area(
-                    "raw_extracted_text",
-                    value=record.get("raw_extracted_text") or "(empty)",
-                    height=180,
-                    label_visibility="collapsed",
-                    key=f"raw_{record['id']}",
-                )
-
-            col_auto, col_confirmed = st.columns(2)
-            with col_auto:
-                st.markdown(f"**Auto-detected points ({len(auto_points)})**")
-                st.dataframe(auto_points, use_container_width=True, hide_index=True)
-            with col_confirmed:
-                st.markdown(f"**User-confirmed points ({len(confirmed_points)})**")
-                st.dataframe(confirmed_points, use_container_width=True, hide_index=True)
+                col_auto, col_confirmed = st.columns(2)
+                with col_auto:
+                    st.markdown(f"**Auto-detected points ({len(auto_points)})**")
+                    st.dataframe(auto_points, use_container_width=True, hide_index=True)
+                with col_confirmed:
+                    st.markdown(f"**User-confirmed points ({len(confirmed_points)})**")
+                    st.dataframe(confirmed_points, use_container_width=True, hide_index=True)
 
 with tab_bulk:
     st.caption(
