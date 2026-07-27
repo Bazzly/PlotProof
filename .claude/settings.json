@@ -75,7 +75,8 @@
       "Bash(.venv/bin/python /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/test_no_popover.py)",
       "Bash(pkill -f \"streamlit run _test_no_popover.py --server.headless true --server.port 8537\")",
       "Bash(lsof -i :8536 -sTCP:LISTEN -t)",
-      "Bash(lsof -i :8537 -sTCP:LISTEN -t)"
+      "Bash(lsof -i :8537 -sTCP:LISTEN -t)",
+      "Bash(git fetch *)"
     ]
   }
 }
