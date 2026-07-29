@@ -22,6 +22,7 @@ from streamlit_folium import st_folium
 from utils import assistant, crs_utils, document_metadata, file_handler, gis_processing, nav, rate_limit, registry, report_generator, risk_calculator, training_data
 from utils import icons, theme, traverse, vision_extract
 from utils.coordinates import parse_coordinate_text
+from utils.wizard import render_wizard, step_header
 
 load_dotenv()
 
@@ -211,35 +212,6 @@ if not st.session_state.get("_consent_accepted"):
 # Resolved once per script run - identifies this visitor for the daily
 # check/extraction caps and burst limiter below (see utils/rate_limit.py).
 CLIENT_ID = rate_limit.get_client_id()
-
-
-def step_header(number: Optional[int], label: str) -> None:
-    badge = f'<span class="pp-step-num">{number}</span>' if number is not None else ""
-    st.markdown(f'<div class="pp-step">{badge}<h2>{label}</h2></div>', unsafe_allow_html=True)
-
-
-def render_wizard(labels: list, current: int) -> None:
-    """Horizontal stepper shown at the top of a multi-step flow (single
-    check or compare) - done/active/upcoming steps styled distinctly via
-    utils/theme.py's .pp-wizard-* classes, so a user always sees where
-    they are and how much is left, TurboTax/Stripe-onboarding style,
-    rather than one long page of every field at once."""
-    parts = []
-    for i, label in enumerate(labels, start=1):
-        if i < current:
-            step_css, circle = "pp-wizard-step--done", "&#10003;"
-        elif i == current:
-            step_css, circle = "pp-wizard-step--active", str(i)
-        else:
-            step_css, circle = "", str(i)
-        parts.append(
-            f'<div class="pp-wizard-step {step_css}"><div class="pp-wizard-step-circle">{circle}</div>'
-            f'<div class="pp-wizard-step-label">{label}</div></div>'
-        )
-        if i < len(labels):
-            connector_css = "pp-wizard-connector--done" if i < current else ""
-            parts.append(f'<div class="pp-wizard-connector {connector_css}"></div>')
-    st.markdown(f'<div class="pp-wizard">{"".join(parts)}</div>', unsafe_allow_html=True)
 
 
 def _load_neighbors():

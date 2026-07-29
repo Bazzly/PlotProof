@@ -28,6 +28,7 @@ _STROKE_ICONS = {
         '<path d="M12 21v-8" /><path d="m9 15.5 3-3 3 3" />'
     ),
     "map-pin": '<path d="M12 22s7-6.3 7-12a7 7 0 1 0-14 0c0 5.7 7 12 7 12Z" /><circle cx="12" cy="10" r="2.5" />',
+    "trending-up": '<path d="m3 17 6-6 4 4 8-8" /><path d="M15 7h6v6" />',
     "info": '<circle cx="12" cy="12" r="9" /><path d="M12 11v6" /><path d="M12 7.2h.01" />',
     "share": (
         '<circle cx="18" cy="5" r="2.5" /><circle cx="6" cy="12" r="2.5" /><circle cx="18" cy="19" r="2.5" />'

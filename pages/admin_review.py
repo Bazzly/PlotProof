@@ -19,6 +19,11 @@ Admin portal:
      questions against - no external API involved in that chat at all,
      by design, so it can't go down the way the old Claude-backed
      version repeatedly did.
+  5. Upload GeoJSON fallback datasets for Investment Analysis (see
+     utils/investment_fallback_data.py) - real, admin-verified amenities/
+     roads/land-use/buildings for a specific area, used to enhance or
+     replace live OpenStreetMap data there when OSM's own tagging is
+     sparse or Overpass is unreachable.
 
 Gated behind ADMIN_PASSWORD (env var), and refuses to render at all if no
 password is configured, so it can never be accidentally exposed with no
@@ -27,6 +32,7 @@ see app.py's st.navigation(..., position="hidden") setup - only reachable
 by going directly to the URL slug set via ADMIN_URL_PATH.
 """
 
+import json
 import os
 import traceback
 
@@ -38,6 +44,7 @@ from utils import (
     crs_utils,
     faq_content,
     file_handler,
+    investment_fallback_data,
     land_chat_match,
     land_chat_training,
     registry,
@@ -71,8 +78,8 @@ if not st.session_state.get("_admin_authed"):
             st.error("Wrong password.")
     st.stop()
 
-tab_key, tab_review, tab_bulk, tab_chat = st.tabs(
-    ["API Key", "Extraction Review", "Bulk Add Plans", "Land Chat Training"]
+tab_key, tab_review, tab_bulk, tab_chat, tab_invest = st.tabs(
+    ["API Key", "Extraction Review", "Bulk Add Plans", "Land Chat Training", "Investment Fallback Data"]
 )
 
 # Files that get skipped from auto-add rather than flagged as an outright
@@ -359,4 +366,73 @@ with tab_chat:
                     st.rerun()
                 if col_delete.button("Delete", key=f"lc_delete_{passage['id']}"):
                     land_chat_training.delete_passage(passage["id"])
+                    st.rerun()
+
+with tab_invest:
+    st.caption(
+        "Real, admin-verified data for a specific area - amenities, roads, land use, buildings - "
+        "used by Investment Analysis (pages/investment_analysis.py) to enhance or replace live "
+        "OpenStreetMap data there. Any category this dataset covers overrides OpenStreetMap's "
+        "result for that category when a query falls inside the dataset's radius; OpenStreetMap "
+        "is still used for anything the dataset doesn't cover, and stays the only source anywhere "
+        "not covered by an upload at all."
+    )
+
+    sample_path = os.path.join("data", "sample_data", "investment_fallback_sample.geojson")
+    if os.path.isfile(sample_path):
+        with open(sample_path, "rb") as f:
+            st.download_button(
+                "Download sample template (.geojson)", data=f.read(),
+                file_name="investment_fallback_sample.geojson", mime="application/geo+json",
+            )
+
+    st.divider()
+    st.markdown("**Upload a dataset**")
+    uploaded = st.file_uploader("GeoJSON file", type=["geojson", "json"], key="_invest_fallback_upload")
+    if uploaded is not None:
+        try:
+            raw_geojson = json.loads(uploaded.getvalue().decode("utf-8"))
+            preview = investment_fallback_data.parse_geojson(raw_geojson)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            st.error(f"Not a valid JSON file: {exc}")
+        except ValueError as exc:
+            st.error(str(exc))
+        else:
+            counts = {k: len(v) for k, v in preview["features"].items()}
+            st.success(
+                f"\"{preview['name']}\" - center {preview['center']['lat']:.5f}, {preview['center']['lon']:.5f}, "
+                f"{preview['radius_m']}m radius. {counts['amenities']} amenities, {counts['roads']} roads, "
+                f"{counts['landuse']} land-use polygons, {counts['buildings']} buildings."
+            )
+            if st.button("Save this dataset", type="primary"):
+                investment_fallback_data.add_dataset(raw_geojson)
+                st.success("Saved.")
+                st.rerun()
+
+    st.divider()
+    st.markdown("**Existing datasets**")
+    datasets = investment_fallback_data.list_datasets()
+    if not datasets:
+        st.info("No fallback datasets uploaded yet - Investment Analysis runs on live OpenStreetMap data only.")
+    else:
+        for dataset in datasets:
+            counts = {k: len(v) for k, v in dataset["features"].items()}
+            label = f"{dataset['name']} - {dataset['radius_m']}m radius"
+            with st.expander(label):
+                st.caption(
+                    f"Center: {dataset['center']['lat']:.5f}, {dataset['center']['lon']:.5f}  |  "
+                    f"Uploaded: {dataset.get('uploaded_at', '?')}"
+                )
+                if dataset.get("source"):
+                    st.markdown(f"**Source:** {dataset['source']}")
+                if dataset.get("captured_at"):
+                    st.markdown(f"**Captured:** {dataset['captured_at']}")
+                if dataset.get("notes"):
+                    st.markdown(f"**Notes:** {dataset['notes']}")
+                st.markdown(
+                    f"**Coverage:** {counts['amenities']} amenities, {counts['roads']} roads, "
+                    f"{counts['landuse']} land-use polygons, {counts['buildings']} buildings"
+                )
+                if st.button("Delete dataset", key=f"inv_delete_{dataset['id']}"):
+                    investment_fallback_data.delete_dataset(dataset["id"])
                     st.rerun()

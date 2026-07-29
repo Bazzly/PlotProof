@@ -467,6 +467,57 @@ def get_css() -> str:
 .pp-cta--outline {{ background: var(--pp-surface); color: var(--pp-ink-primary) !important; }}
 .pp-cta--gold {{ background: var(--pp-gold); color: var(--pp-gold-ink) !important; border-color: transparent; font-weight: 700; }}
 
+/* ---- investment score (pages/investment_analysis.py) ---- */
+.pp-score-card {{
+  display: flex;
+  align-items: center;
+  gap: var(--pp-space-4);
+  padding: var(--pp-space-4) var(--pp-space-5);
+  border-radius: var(--pp-radius);
+  border-left: 4px solid var(--pp-status);
+  background: color-mix(in srgb, var(--pp-status) 12%, var(--pp-surface));
+  margin-bottom: var(--pp-space-4);
+}}
+.pp-score-number {{
+  font-family: var(--pp-font-heading);
+  font-size: 2.6rem;
+  font-weight: 800;
+  color: var(--pp-status);
+  line-height: 1;
+  white-space: nowrap;
+}}
+.pp-score-number span {{ font-size: 1.1rem; font-weight: 500; color: var(--pp-ink-muted); }}
+.pp-score-verdict {{ font-weight: 700; font-size: 1.1rem; color: var(--pp-ink-primary); }}
+
+.pp-subscore {{ margin-bottom: var(--pp-space-3); }}
+.pp-subscore-row {{
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  font-size: 0.9rem;
+  color: var(--pp-ink-secondary);
+}}
+.pp-subscore-track {{
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--pp-ink-muted) 18%, var(--pp-surface));
+  overflow: hidden;
+}}
+.pp-subscore-fill {{ height: 100%; border-radius: 999px; background: var(--pp-status); }}
+
+/* ---- AI price-potential estimate - deliberately styled as a warning,
+   never a plain metric, since it has no real transaction data behind it
+   anywhere in the app (see utils/investment_analysis.py) ---- */
+.pp-price-card {{
+  border: 1.5px solid var(--pp-warning);
+  background: color-mix(in srgb, var(--pp-warning) 10%, var(--pp-surface));
+  border-radius: var(--pp-radius);
+  padding: var(--pp-space-4);
+  margin-bottom: var(--pp-space-4);
+}}
+.pp-price-value {{ font-size: 1.4rem; font-weight: 800; color: var(--pp-ink-primary); margin: var(--pp-space-2) 0; }}
+.pp-price-caveat {{ font-style: italic; font-weight: 600; color: #8a5a00; margin-top: var(--pp-space-2); }}
+
 /* ---- footer ---- */
 .pp-footer {{
   text-align: center;

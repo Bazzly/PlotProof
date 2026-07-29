@@ -1,616 +1,475 @@
-# ROLE
+# FEATURE REQUEST: AI Investment Intelligence Module for PlotProof
 
-You are the Lead Product Manager, Senior UX Designer, GIS Architect, AI Engineer, and Full-Stack Streamlit Developer for PlotProof.
+## ROLE
 
-Your objective is to transform PlotProof from a "land verification tool" into Nigeria's leading AI-powered Land Intelligence Platform while preserving all existing functionality.
+You are a Senior GIS Engineer, Real Estate Data Scientist, AI Engineer, Remote Sensing Specialist, Urban Planner, and Senior Streamlit Full-Stack Developer.
 
-Website:
-https://plotproof.streamlit.app/
+Your task is to design and implement a new premium feature called **Investment Intelligence** for PlotProof.
 
-You are NOT allowed to remove or break any existing features.
+This feature should transform PlotProof from a land verification platform into an AI-powered Land Investment Analysis platform.
 
-Every enhancement must improve the user experience while maintaining backward compatibility.
-
----
-
-# PRIMARY OBJECTIVE
-
-Build features that help users answer three questions:
-
-1. Is this land genuine?
-2. Is it safe to buy?
-3. What should I do next?
-
-Every feature should reduce uncertainty and help users make better land purchase decisions.
+IMPORTANT:
+- Do NOT remove or break any existing PlotProof functionality.
+- Integrate this module seamlessly into the existing application.
+- Follow the existing design system while improving UI/UX where necessary.
+- Build the feature in a modular and scalable way.
 
 ---
 
-# PRODUCT VISION
+# FEATURE OVERVIEW
 
-Transform PlotProof into an AI-powered ecosystem that combines:
+Create a new menu:
 
-• GIS Intelligence
-• Artificial Intelligence
-• Land Verification
-• Survey Plan Analysis
-• Risk Assessment
-• Property Discovery
-• Professional Reports
-• Surveyor Marketplace
-• Land Investment Insights
+🏘 Investment Analysis
 
-The platform should feel comparable to Google Maps + TurboTax + ChatGPT + Zillow, but focused on Nigerian land verification.
+Users should be able to analyze the investment potential of any location by entering:
 
----
+• Latitude
+• Longitude
 
-# PHASE 1 — PRODUCT AUDIT
+or
 
-Before coding:
+• Dropping a pin on the interactive map
 
-Analyze the entire application.
+or
 
-Identify:
+• Searching by place name or address.
 
-• Missing user journeys
-• Missing onboarding
-• Missing trust-building features
-• Confusing workflows
-• UX bottlenecks
-• Duplicate functionality
-• Weak feature discoverability
-• Technical debt
+The system should automatically generate a comprehensive investment report using GIS analysis, satellite imagery, spatial intelligence, AI reasoning, and available geographic datasets.
 
-Produce a prioritized roadmap.
-
-Rank improvements by:
-
-High Impact / Low Effort
-
-High Impact / Medium Effort
-
-Long-Term Vision
-
-Do not start coding until the audit is complete.
+The experience should feel like a premium real estate intelligence platform.
 
 ---
 
-# PHASE 2 — SMART USER DASHBOARD
+# USER WORKFLOW
 
-Design a personalized dashboard.
+Landing
 
-Include:
+↓
 
-Welcome message
+Investment Analysis
 
-Recent verifications
+↓
 
-Risk summary
+Choose Location
 
-Saved properties
+• Search location
+• Enter coordinates
+• Click on map
 
-Verification history
+↓
 
-Download history
+Select Analysis Radius
 
-Favorite locations
+100 m
 
-Quick actions
+250 m
 
-Recommended next steps
+500 m
 
-Recent notifications
+1 km
 
-AI suggestions
+Custom
 
-The dashboard should feel modern and data-rich.
+↓
 
----
+Run AI Analysis
 
-# PHASE 3 — AI LAND RISK SCORE
+↓
 
-Create a comprehensive scoring engine.
+Interactive Dashboard
 
-Display:
+↓
 
-Overall Risk Score
+Investment Score
 
-Confidence Score
+↓
 
-Fraud Probability
+Detailed Report
 
-Survey Accuracy
+↓
 
-Location Confidence
-
-Boundary Integrity
-
-Ownership Confidence
-
-Visualize scores using gauges, progress bars, and color-coded indicators.
-
-Explain every score in simple language.
-
-Never display raw numbers without context.
+Download PDF
 
 ---
 
-# PHASE 4 — AI LAND ASSISTANT
+# ANALYSIS MODULES
 
-Create an integrated AI assistant.
+The AI should analyze as many of the following factors as possible.
 
-Users should be able to ask:
+## 1. DEVELOPMENT ANALYSIS
 
-Is this land safe?
+Estimate:
 
-Explain this report.
+• Number of developed buildings
+• Building density
+• Vacant land percentage
+• Built-up area
+• Green/open space
+• Construction activity
+• Urban expansion trend
 
-What does East Coordinate mean?
-
-Why is my report High Risk?
-
-Can I buy this land?
-
-What should I verify next?
-
-The assistant must answer in plain English and reference the user's current report where appropriate.
+Visualize using charts and maps.
 
 ---
 
-# PHASE 5 — SURVEY PLAN OCR
+## 2. LAND USE ANALYSIS
 
-Allow users to upload:
+Classify surrounding land into:
 
-• PDF
-• Image
-• Scanned survey plan
+Residential
 
-Automatically extract:
+Commercial
 
-Survey Number
+Industrial
 
-Coordinates
+Agricultural
 
-Area
+Mixed Use
 
-Surveyor Name
+Institutional
 
-Date
+Government
 
-Beacon Numbers
+Undeveloped Land
 
-Scale
-
-North Arrow
-
-Auto-populate verification forms and allow users to edit extracted values before submission.
+Estimate percentage distribution.
 
 ---
 
-# PHASE 6 — DOCUMENT AUTHENTICITY CHECK
+## 3. PROPERTY VALUE ESTIMATION
 
-Allow upload of:
+Generate:
 
-Survey Plan
+Estimated market price
 
-Deed of Assignment
+Estimated price per square meter
 
-Certificate of Occupancy
+Price range
 
-Allocation Letter
+Investment confidence level
 
-Receipt
+Comparable neighborhood pricing
 
-Automatically check:
+Future appreciation potential
 
-Missing signatures
-
-Tampering
-
-Low image quality
-
-Missing pages
-
-Inconsistent dates
-
-Mismatched names
-
-Duplicate document numbers
-
-Flag suspicious findings with explanations.
+Clearly explain that estimates are AI-assisted and not official valuations.
 
 ---
 
-# PHASE 7 — PROPERTY COMPARISON
+## 4. ROAD & ACCESSIBILITY ANALYSIS
 
-Enable side-by-side comparison of two properties.
+Analyze:
 
-Compare:
+Road access
 
-Coordinates
+Road hierarchy
 
-Area
+Road condition (where data allows)
 
-Boundary
+Distance to major roads
 
-Survey Plan
+Traffic accessibility
 
-Risk Score
+Connectivity score
 
-Location
+Travel time to key destinations
 
-Nearby infrastructure
+Ease of access
 
-Flood risk
+Rate the accessibility:
 
-Investment score
+Excellent
 
-Highlight all differences visually.
+Good
+
+Average
+
+Poor
+
+Explain why.
 
 ---
 
-# PHASE 8 — SMART MAP EXPERIENCE
+## 5. AMENITY ANALYSIS
 
-Upgrade the map to include:
-
-Satellite imagery
-
-OpenStreetMap
-
-Terrain
-
-Roads
-
-Buildings
-
-Flood zones
-
-Government acquisitions
-
-Rights of way
+Automatically identify nearby:
 
 Schools
 
 Hospitals
 
-Markets
-
 Police stations
 
-Utilities
+Markets
 
-Enable:
+Banks
 
-Measure distance
+Fuel stations
 
-Measure area
+Shopping centres
 
-Fullscreen mode
+Bus stops
 
-Coordinate inspector
+Religious centres
 
-Parcel highlighting
+Restaurants
 
-Custom legends
+Government offices
 
-Interactive layer controls
+Hotels
 
----
+Estimate distance and travel time.
 
-# PHASE 9 — LOCATION INSIGHTS
-
-For every verified property, automatically generate:
-
-Nearby amenities
-
-Travel time
-
-Road accessibility
-
-Development level
-
-Urban growth
-
-Utilities availability
-
-Environmental conditions
-
-Neighborhood summary
-
-Explain why these insights matter to buyers.
+Generate an Amenity Score.
 
 ---
 
-# PHASE 10 — FLOOD & ENVIRONMENTAL RISK
-
-Analyze:
-
-Flood susceptibility
-
-Elevation
-
-Drainage
-
-Wetlands
-
-Erosion
-
-Water bodies
-
-Vegetation
-
-Display a simple risk rating and actionable advice.
-
----
-
-# PHASE 11 — LAND VALUE ESTIMATION
+## 6. DEVELOPMENT POTENTIAL
 
 Estimate:
 
-Current market value
+Vacant land availability
 
-Value range
+Likelihood of future development
 
-Comparable properties
+Neighbourhood growth trend
 
-Appreciation potential
+Construction intensity
 
-Investment score
+Urbanization trend
 
-Confidence level
+Population growth indicators
 
-Clearly label estimates and explain the assumptions.
-
----
-
-# PHASE 12 — FRAUD DETECTION
-
-Detect:
-
-Coordinate duplication
-
-Boundary overlap
-
-Survey number duplication
-
-Suspicious edits
-
-Impossible geometry
-
-Document inconsistencies
-
-Common fraud patterns
-
-Provide detailed explanations and recommendations.
+Investment attractiveness
 
 ---
 
-# PHASE 13 — PURCHASE READINESS CHECKLIST
+## 7. ENVIRONMENTAL ANALYSIS
 
-Generate a personalized checklist.
+Evaluate:
 
-Examples:
+Flood risk
 
-✓ Verify seller identity
+Elevation
 
-✓ Visit the site
+Slope
 
-✓ Meet a licensed surveyor
+Vegetation
 
-✓ Confirm government records
+Water bodies
 
-✓ Obtain legal review
+Wetlands
 
-✓ Confirm title documents
+Drainage
 
-Track completion progress.
+Heat exposure
 
----
+Environmental sustainability
 
-# PHASE 14 — DIGITAL BOUNDARY WALK
-
-Provide GPS-assisted field navigation.
-
-Guide users from beacon to beacon.
-
-Show:
-
-Distance remaining
-
-Direction
-
-Next beacon
-
-Estimated completion
-
-Completion percentage
+Provide a risk score and explanation.
 
 ---
 
-# PHASE 15 — COMMUNITY INSIGHTS
+## 8. SECURITY & LIVABILITY INSIGHTS
 
-Allow verified users to submit moderated feedback such as:
+Generate qualitative insights based on available datasets and spatial indicators:
 
-Road condition
+Neighborhood maturity
 
-Flood history
+Commercial activity
 
-Security
+Residential suitability
 
-Electricity
+Business suitability
 
-Water availability
+Family friendliness
 
-Development activity
+Accessibility
 
-Show only verified, timestamped contributions.
+Infrastructure quality
 
----
-
-# PHASE 16 — SURVEYOR MARKETPLACE
-
-Create a directory of licensed surveyors.
-
-Include:
-
-Profile
-
-License number
-
-Location
-
-Specialization
-
-Ratings
-
-Availability
-
-Booking request
-
-Distance from user
-
-Allow users to contact professionals after verification.
+Potential investment risks
 
 ---
 
-# PHASE 17 — REPORT CENTER
+## 9. AI INVESTMENT SCORE
 
-Improve reports.
+Generate an overall score from 0–100.
 
-Support:
+Example:
 
-PDF
+Investment Score
 
-GeoJSON
+91/100
 
-CSV
+Excellent Investment Opportunity
 
-Map Snapshot
+Subscores:
 
-Shareable link
+Accessibility
 
-QR Code
+Development
 
-Each report should include:
+Infrastructure
 
-Executive summary
+Growth Potential
 
-Risk score
+Amenities
 
-Confidence score
+Environmental Safety
 
-Map
+Land Availability
+
+Price Potential
+
+Explain every score in plain English.
+
+---
+
+## 10. AI SUMMARY
+
+Generate a narrative report like a professional property consultant.
+
+Example:
+
+"This location is situated within a rapidly developing urban corridor with strong road connectivity and a high concentration of residential developments. Approximately 78% of the surrounding area is already developed, while 22% remains vacant, indicating room for future growth. Multiple schools, hospitals, markets, and commercial centres are located within a short travel distance, making the area attractive for residential and mixed-use investment. Based on current spatial indicators, this location demonstrates above-average appreciation potential."
+
+The report must be understandable by someone with no GIS knowledge.
+
+---
+
+# MAP EXPERIENCE
+
+Upgrade the map with optional analysis layers:
+
+Satellite imagery
+
+OpenStreetMap
+
+Road network
+
+Building footprints
+
+Land use
+
+Flood layer
+
+Elevation
+
+Heat map
+
+Development density
+
+Vacant land highlights
+
+Radius analysis
+
+Interactive legends
+
+Users should be able to toggle layers.
+
+---
+
+# VISUAL DASHBOARD
+
+Create a premium analytics dashboard containing:
+
+Investment Score
+
+Property Value Estimate
+
+Development Percentage
+
+Vacant Land Percentage
+
+Accessibility Score
+
+Amenity Score
+
+Environmental Risk
+
+Growth Potential
+
+Charts
+
+Progress indicators
+
+Interactive map
+
+Cards
 
 Recommendations
 
-Verification timestamp
+---
 
-Report ID
+# RECOMMENDATIONS ENGINE
 
-Branding
+Generate practical recommendations such as:
+
+Suitable for residential investment
+
+Suitable for commercial development
+
+Ideal for estate development
+
+Long-term appreciation expected
+
+Requires further due diligence
+
+High flood risk—proceed with caution
+
+Excellent road access
+
+Limited infrastructure
+
+Strong growth corridor
+
+Provide actionable next steps.
 
 ---
 
-# PHASE 18 — PROPERTY WALLET
+# EXPORTS
 
-Allow users to save:
+Allow users to download:
 
-Verified properties
+Professional PDF Report
 
-Favorite locations
+CSV Summary
 
-Reports
+GeoJSON
 
-Uploaded documents
+Map Snapshot
 
-Verification history
+Shareable Report Link
 
-Comparison history
+QR Code
 
-Provide search, filters, and folders.
+The PDF should include:
 
----
+Executive Summary
 
-# PHASE 19 — NOTIFICATIONS
+Maps
 
-Notify users when:
+Charts
 
-A report is ready
+Scores
 
-A saved property changes
+Recommendations
 
-Government data updates
+Analysis timestamp
 
-Flood risk changes
+Coordinates
 
-Infrastructure developments occur nearby
-
-Allow email and in-app notifications.
+Radius used
 
 ---
 
-# PHASE 20 — ONBOARDING
+# TECHNICAL IMPLEMENTATION
 
-Create a first-time user experience.
+Use reusable services and components.
 
-Explain:
-
-What PlotProof does
-
-How verification works
-
-What users need
-
-How reports should be interpreted
-
-Use interactive walkthroughs and contextual tooltips.
-
----
-
-# PHASE 21 — ACCESSIBILITY
-
-Ensure:
-
-Keyboard navigation
-
-Readable typography
-
-High contrast
-
-Responsive design
-
-Large touch targets
-
-Screen-reader compatibility
-
-Plain-language labels
-
----
-
-# PHASE 22 — PERFORMANCE
-
-Optimize:
-
-Session state
-
-Caching
-
-Lazy loading
-
-Map rendering
-
-API requests
-
-OCR performance
-
-Database queries
-
-Minimize unnecessary reruns.
-
----
-
-# PHASE 23 — CODE QUALITY
-
-Refactor into:
+Suggested structure:
 
 components/
 
@@ -618,78 +477,66 @@ pages/
 
 services/
 
-models/
+analysis/
+
+maps/
+
+reports/
 
 utils/
 
-styles/
-
 assets/
 
-tests/
+models/
 
-Keep business logic separate from UI.
+Separate GIS logic from UI.
 
-Use reusable components.
+Cache expensive spatial analysis.
 
-Add docstrings and type hints.
+Support asynchronous processing for long-running tasks.
 
-Remove dead code.
-
-Write unit tests for critical logic.
+Use modular architecture for future expansion.
 
 ---
 
-# PHASE 24 — QA
+# FUTURE-READY DESIGN
 
-Before completion:
+Design the system so future integrations can be added easily, including:
 
-Test every feature.
+Satellite imagery providers
 
-Test uploads.
+Drone imagery
 
-Test OCR.
+Government cadastral data
 
-Test downloads.
+Property transaction databases
 
-Test reports.
+Machine learning valuation models
 
-Test responsiveness.
+Population datasets
 
-Test mobile.
+Road quality datasets
 
-Test dark mode.
+Climate datasets
 
-Test accessibility.
+Economic indicators
 
-Fix every issue before final delivery.
+Remote sensing APIs
+
+OpenStreetMap
+
+Google Maps
+
+Mapbox
+
+Earth Engine
 
 ---
 
 # SUCCESS CRITERIA
 
-The finished application should make users say:
+The final feature should make users feel like they are receiving a professional feasibility study from a team of surveyors, GIS analysts, urban planners, and real estate consultants—not just a map.
 
-"I understand this report."
+Every result should be visual, interactive, easy to understand, and supported by clear explanations.
 
-"I know the risks."
-
-"I know what to do next."
-
-"I trust this platform."
-
-"I can confidently decide whether to proceed."
-
-The platform should feel like a premium commercial SaaS product rather than a typical Streamlit application.
-
-Deliver clean, production-ready code with clear documentation, maintainability, and an outstanding user experience.
-
-Work iteratively.
-
-For every completed phase:
-
-1. Explain the design decisions.
-2. List the modified files.
-3. Run tests.
-4. Verify that no existing functionality has been broken.
-5. Proceed only after validation.
+The feature should be scalable, maintainable, production-ready, and seamlessly integrated into the existing PlotProof platform without affecting current verification features.

@@ -576,6 +576,296 @@ def generate_geojson_report(points: List[Tuple[float, float]], result: Dict[str,
     return io.BytesIO(json.dumps(payload, indent=2).encode("utf-8"))
 
 
+def _score_status(score: int) -> str:
+    if score >= 65:
+        return "good"
+    if score >= 35:
+        return "warning"
+    return "critical"
+
+
+def _draw_investment_header(c: canvas.Canvas, overall_score: int, report_id: str) -> float:
+    band_height = 1.05 * inch
+    c.setFillColor(ACCENT)
+    c.rect(0, PAGE_HEIGHT - band_height, PAGE_WIDTH, band_height, stroke=0, fill=1)
+
+    logo_cx, logo_cy, s = MARGIN + 0.3 * inch, PAGE_HEIGHT - band_height / 2, 11
+    c.setStrokeColor(WHITE)
+    c.setLineWidth(2.2)
+    c.setLineJoin(1)
+    c.setLineCap(1)
+    path = c.beginPath()
+    path.moveTo(logo_cx - s, logo_cy - s * 0.7)
+    path.lineTo(logo_cx - s / 3, logo_cy + s)
+    path.lineTo(logo_cx, logo_cy)
+    path.lineTo(logo_cx + s / 3, logo_cy + s)
+    path.lineTo(logo_cx + s, logo_cy - s * 0.7)
+    c.drawPath(path, stroke=1, fill=0)
+
+    c.setFillColor(WHITE)
+    c.setFont("Helvetica-Bold", 20)
+    c.drawString(MARGIN + 0.62 * inch, PAGE_HEIGHT - 0.48 * inch, "PlotProof")
+    c.setFont("Helvetica", 10.5)
+    c.drawString(MARGIN + 0.62 * inch, PAGE_HEIGHT - 0.68 * inch, "Investment Analysis Report")
+
+    c.setFont("Helvetica", 8.5)
+    meta = f"Generated {datetime.now().strftime('%d %b %Y, %H:%M')}"
+    c.drawRightString(PAGE_WIDTH - MARGIN, PAGE_HEIGHT - 0.42 * inch, meta)
+    c.setFont("Helvetica-Bold", 8.5)
+    c.drawRightString(PAGE_WIDTH - MARGIN, PAGE_HEIGHT - 0.58 * inch, f"INVESTMENT SCORE: {overall_score}/100")
+    c.setFont("Helvetica", 7.5)
+    c.drawRightString(PAGE_WIDTH - MARGIN, PAGE_HEIGHT - 0.74 * inch, f"Report ID: {report_id}")
+
+    return PAGE_HEIGHT - band_height - 0.3 * inch
+
+
+def _draw_score_gauge(c: canvas.Canvas, y: float, score: Dict[str, Any]) -> float:
+    overall = score["overall_score"]
+    status = _score_status(overall)
+    color = STATUS_COLORS[status]
+    height = 0.7 * inch
+
+    c.setFillColor(_tint(color, 0.88))
+    c.roundRect(MARGIN, y - height, CONTENT_WIDTH, height, 6, stroke=0, fill=1)
+    c.setStrokeColor(color)
+    c.setLineWidth(2.5)
+    c.line(MARGIN, y - height, MARGIN, y)
+
+    c.setFillColor(color)
+    c.setFont("Helvetica-Bold", 26)
+    c.drawString(MARGIN + 0.25 * inch, y - height / 2 - 9, f"{overall}")
+    c.setFont("Helvetica", 11)
+    c.drawString(MARGIN + 0.25 * inch + c.stringWidth(f"{overall}", "Helvetica-Bold", 26) + 4, y - height / 2 - 4, "/100")
+
+    c.setFillColor(INK_PRIMARY)
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(MARGIN + 1.3 * inch, y - height / 2 - 2, score["verdict"])
+
+    return y - height - 0.25 * inch
+
+
+def _draw_subscore_bars(c: canvas.Canvas, y: float, score: Dict[str, Any]) -> float:
+    rows = [
+        ("Accessibility", score["accessibility"]["score"]),
+        ("Development", score["development"]["score"]),
+        ("Amenities", score["amenities"]["score"]),
+        ("Land Availability", score["availability"]["score"]),
+        ("Growth Potential", score["growth"]["score"]),
+    ]
+    row_h = 0.3 * inch
+    label_w = 1.5 * inch
+    bar_w = CONTENT_WIDTH - label_w - 0.5 * inch
+    total_h = row_h * len(rows) + 0.2 * inch
+
+    if y - total_h < MARGIN + 0.4 * inch:
+        y = _new_page(c)
+
+    c.setFillColor(INK_PRIMARY)
+    c.setFont("Helvetica-Bold", 10.5)
+    c.drawString(MARGIN, y - 9, "Score Breakdown")
+    y -= 22
+
+    for label, value in rows:
+        color = STATUS_COLORS[_score_status(value)]
+        c.setFont("Helvetica", 8.5)
+        c.setFillColor(INK_SECONDARY)
+        c.drawString(MARGIN, y - row_h / 2 - 3, label)
+
+        bar_x = MARGIN + label_w
+        c.setFillColor(_tint(INK_MUTED, 0.85))
+        c.roundRect(bar_x, y - row_h / 2 - 4, bar_w, 8, 3, stroke=0, fill=1)
+        fill_w = bar_w * (value / 100)
+        if fill_w > 0:
+            # Plain rect below the corner-radius width, not roundRect - a
+            # roundRect narrower than its own corner radius draws a
+            # malformed sliver instead of nothing.
+            c.setFillColor(color)
+            if fill_w >= 6:
+                c.roundRect(bar_x, y - row_h / 2 - 4, fill_w, 8, 3, stroke=0, fill=1)
+            else:
+                c.rect(bar_x, y - row_h / 2 - 4, fill_w, 8, stroke=0, fill=1)
+
+        c.setFont("Helvetica-Bold", 8.5)
+        c.setFillColor(INK_PRIMARY)
+        c.drawString(bar_x + bar_w + 6, y - row_h / 2 - 3, str(value))
+        y -= row_h
+
+    return y - 0.1 * inch
+
+
+def _draw_price_estimate_card(c: canvas.Canvas, y: float, price_estimate: Dict[str, Any]) -> float:
+    """Deliberately styled as a warning, not a plain data card - this
+    number has no real transaction data behind it anywhere in the app
+    (see utils/investment_analysis.py's module docstring)."""
+    low = price_estimate.get("per_sqm_low")
+    high = price_estimate.get("per_sqm_high")
+    caveat = price_estimate.get("caveat") or "AI estimate only - not based on real transaction data."
+    reasoning = price_estimate.get("reasoning", "")
+
+    width = CONTENT_WIDTH
+    padding = 10
+    font, size, gap = "Helvetica", 8.5, 12
+    caveat_lines = _wrapped_lines(c, caveat, font, size, width - padding * 2)
+    reasoning_lines = _wrapped_lines(c, reasoning, font, size, width - padding * 2) if reasoning else []
+    card_h = 20 + 20 + len(caveat_lines) * gap + len(reasoning_lines) * gap + padding * 2 + 6
+
+    if y - card_h < MARGIN + 0.4 * inch:
+        y = _new_page(c)
+
+    warning = STATUS_COLORS["warning"]
+    c.setFillColor(_tint(warning, 0.9))
+    c.setStrokeColor(warning)
+    c.roundRect(MARGIN, y - card_h, width, card_h, 6, stroke=1, fill=1)
+
+    ty = y - padding - 10
+    c.setFillColor(INK_PRIMARY)
+    c.setFont("Helvetica-Bold", 10.5)
+    c.drawString(MARGIN + padding, ty, "Estimated Price Potential (AI estimate - not a valuation)")
+    ty -= 18
+
+    if low is not None and high is not None:
+        c.setFont("Helvetica-Bold", 13)
+        c.setFillColor(INK_PRIMARY)
+        # NGN, not the naira glyph - reportlab's base Helvetica font is
+        # WinAnsi-only and has no U+20A6 glyph (renders as a black box).
+        c.drawString(MARGIN + padding, ty, f"NGN {low:,.0f} - NGN {high:,.0f} per sqm")
+        ty -= 18
+
+    c.setFont(font, size)
+    for line in reasoning_lines:
+        c.setFillColor(INK_SECONDARY)
+        c.drawString(MARGIN + padding, ty, line)
+        ty -= gap
+
+    c.setFont("Helvetica-BoldOblique", size)
+    for line in caveat_lines:
+        c.setFillColor(colors.HexColor("#8a5a00"))
+        c.drawString(MARGIN + padding, ty, line)
+        ty -= gap
+
+    return y - card_h - 0.2 * inch
+
+
+def _draw_investment_qr_block(c: canvas.Canvas, y: float, share_url: str, report_id: str) -> float:
+    qr_size = 0.75 * inch
+    if y - qr_size < MARGIN + 0.6 * inch:
+        y = _new_page(c)
+
+    qr_img = qrcode.make(share_url, border=1).get_image()
+    c.drawImage(ImageReader(qr_img), MARGIN, y - qr_size, width=qr_size, height=qr_size, mask="auto")
+
+    text_x = MARGIN + qr_size + 0.15 * inch
+    c.setFillColor(INK_PRIMARY)
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(text_x, y - 0.22 * inch, "Scan to view this report online")
+    c.setFillColor(INK_MUTED)
+    c.setFont("Helvetica", 7.5)
+    for line in _wrapped_lines(c, share_url, "Helvetica", 7.5, PAGE_WIDTH - MARGIN - text_x):
+        c.drawString(text_x, y - 0.36 * inch, line)
+    c.drawString(text_x, y - 0.48 * inch, f"Report ID: {report_id}")
+
+    return y - qr_size - 0.25 * inch
+
+
+def generate_investment_csv(location: Dict[str, Any], radius_m: int, score: Dict[str, Any]) -> io.BytesIO:
+    """Flat key/value summary of the score breakdown, for a spreadsheet."""
+    text_buffer = io.StringIO()
+    writer = csv.writer(text_buffer)
+    writer.writerow(["field", "value"])
+    writer.writerow(["location", location.get("display_name", "")])
+    writer.writerow(["latitude", f"{location['lat']:.6f}"])
+    writer.writerow(["longitude", f"{location['lon']:.6f}"])
+    writer.writerow(["radius_m", radius_m])
+    writer.writerow(["overall_score", score["overall_score"]])
+    writer.writerow(["verdict", score["verdict"]])
+    writer.writerow(["accessibility_score", score["accessibility"]["score"]])
+    writer.writerow(["accessibility_rating", score["accessibility"]["rating"]])
+    writer.writerow(["development_score", score["development"]["score"]])
+    writer.writerow(["building_count", score["development"]["building_count"]])
+    writer.writerow(["amenities_score", score["amenities"]["score"]])
+    writer.writerow(["amenity_categories_present", score["amenities"]["categories_present"]])
+    writer.writerow(["availability_score", score["availability"]["score"]])
+    writer.writerow(["growth_score", score["growth"]["score"]])
+    for entry in score["land_use"]["breakdown"]:
+        writer.writerow([f"land_use_{entry['category'].lower().replace(' ', '_')}_pct", entry["percentage"]])
+    return io.BytesIO(text_buffer.getvalue().encode("utf-8"))
+
+
+def generate_investment_geojson(location: Dict[str, Any], radius_m: int, score: Dict[str, Any]) -> io.BytesIO:
+    feature = {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [location["lon"], location["lat"]]},
+        "properties": {
+            "display_name": location.get("display_name"),
+            "radius_m": radius_m,
+            "overall_score": score["overall_score"],
+            "verdict": score["verdict"],
+            "accessibility_score": score["accessibility"]["score"],
+            "development_score": score["development"]["score"],
+            "amenities_score": score["amenities"]["score"],
+            "availability_score": score["availability"]["score"],
+            "growth_score": score["growth"]["score"],
+            "generated": datetime.now().isoformat(),
+        },
+    }
+    payload = {"type": "FeatureCollection", "features": [feature]}
+    return io.BytesIO(json.dumps(payload, indent=2).encode("utf-8"))
+
+
+def generate_investment_pdf_report(
+    location: Dict[str, Any],
+    radius_m: int,
+    score: Dict[str, Any],
+    narrative: Optional[Dict[str, Any]],
+    share_url: Optional[str] = None,
+) -> io.BytesIO:
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+    report_id = generate_report_id()
+
+    y = _draw_investment_header(c, score["overall_score"], report_id)
+
+    c.setFillColor(INK_SECONDARY)
+    c.setFont("Helvetica", 9)
+    place_label = location.get("display_name") or f"{location['lat']:.5f}, {location['lon']:.5f}"
+    c.drawString(MARGIN, y, f"{place_label}  -  {radius_m}m radius")
+    y -= 0.25 * inch
+
+    y = _draw_score_gauge(c, y, score)
+    y = _draw_subscore_bars(c, y, score)
+
+    if narrative:
+        y = _draw_card(c, y, "Summary", [narrative["summary"]], ACCENT, PAGE_WIDTH - MARGIN)
+        y = _draw_price_estimate_card(c, y, narrative["price_estimate"])
+        y = _draw_card(c, y, "Recommendations", narrative["recommendations"], STATUS_COLORS["good"], PAGE_WIDTH - MARGIN)
+    else:
+        y = _draw_card(
+            c, y, "AI Summary",
+            ["The AI narrative wasn't available when this report was generated - the scores above are still real, computed data."],
+            STATUS_COLORS["warning"], PAGE_WIDTH - MARGIN,
+        )
+
+    amenity_lines = [
+        f"{b['category']}: {b['count']} found" + (f", nearest {b['nearest_m']}m away" if b["nearest_m"] is not None else "")
+        for b in score["amenities"]["breakdown"] if b["count"] > 0
+    ] or ["No tracked amenities found within this radius in OpenStreetMap."]
+    y = _draw_card(c, y, "Nearby Amenities", amenity_lines, ACCENT, PAGE_WIDTH - MARGIN)
+
+    land_use_lines = [f"{b['category']}: {b['percentage']}%" for b in score["land_use"]["breakdown"]] or [
+        "No land-use data tagged in OpenStreetMap for this area."
+    ]
+    y = _draw_card(c, y, "Land Use Mix", land_use_lines, ACCENT, PAGE_WIDTH - MARGIN)
+
+    if share_url:
+        y = _draw_investment_qr_block(c, y, share_url, report_id)
+
+    _draw_footer(c)
+    c.showPage()
+    c.save()
+    buffer.seek(0)
+    return buffer
+
+
 def generate_pdf_report(
     result: Dict[str, Any],
     points: List[Tuple[float, float]],

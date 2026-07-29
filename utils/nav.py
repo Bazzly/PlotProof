@@ -34,6 +34,7 @@ def render_sidebar() -> None:
             unsafe_allow_html=True,
         )
         st.page_link("app_home.py", label="Land Risk Check", icon="🧭")
+        st.page_link("pages/investment_analysis.py", label="Investment Analysis", icon="📈")
         st.page_link("pages/about.py", label="About & Legal", icon="📄")
         st.page_link("pages/faq.py", label="Common Questions", icon="❓")
 

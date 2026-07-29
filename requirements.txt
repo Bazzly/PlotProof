@@ -14,3 +14,4 @@ pytesseract>=0.3.10
 anthropic>=0.116.0
 streamlit-sortables>=0.3.1
 qrcode>=7.4.0
+requests>=2.31.0
