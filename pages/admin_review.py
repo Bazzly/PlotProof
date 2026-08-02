@@ -24,6 +24,12 @@ Admin portal:
      roads/land-use/buildings for a specific area, used to enhance or
      replace live OpenStreetMap data there when OSM's own tagging is
      sparse or Overpass is unreachable.
+  6. Review, rate, and publish Land Listings submissions (see
+     utils/listings.py, pages/listings.py) - every listing starts hidden
+     until approved here; set/override the risk rating by hand, mark
+     paid "PlotProof Verified" status (no in-app payment - see
+     utils/listings.py's docstring for why), and get pre-filled share
+     links (utils/listing_format.py) for a published listing.
 
 Gated behind ADMIN_PASSWORD (env var), and refuses to render at all if no
 password is configured, so it can never be accidentally exposed with no
@@ -35,6 +41,7 @@ by going directly to the URL slug set via ADMIN_URL_PATH.
 import json
 import os
 import traceback
+from datetime import datetime, timezone
 
 import streamlit as st
 
@@ -44,10 +51,14 @@ from utils import (
     crs_utils,
     faq_content,
     file_handler,
+    gis_processing,
     investment_fallback_data,
     land_chat_match,
     land_chat_training,
+    listing_format,
+    listings,
     registry,
+    risk_calculator,
     theme,
     training_data,
     traverse,
@@ -78,8 +89,8 @@ if not st.session_state.get("_admin_authed"):
             st.error("Wrong password.")
     st.stop()
 
-tab_key, tab_review, tab_bulk, tab_chat, tab_invest = st.tabs(
-    ["API Key", "Extraction Review", "Bulk Add Plans", "Land Chat Training", "Investment Fallback Data"]
+tab_key, tab_review, tab_bulk, tab_chat, tab_invest, tab_listings = st.tabs(
+    ["API Key", "Extraction Review", "Bulk Add Plans", "Land Chat Training", "Investment Fallback Data", "Listings"]
 )
 
 # Files that get skipped from auto-add rather than flagged as an outright
@@ -436,3 +447,193 @@ with tab_invest:
                 if st.button("Delete dataset", key=f"inv_delete_{dataset['id']}"):
                     investment_fallback_data.delete_dataset(dataset["id"])
                     st.rerun()
+
+
+def _render_admin_listing(listing: dict, app_url: str) -> None:
+    risk_level = listings.effective_risk_level(listing)
+    badges = [listing["status"]]
+    if listing.get("verification_requested"):
+        badges.append("verification requested")
+    if listing.get("verified"):
+        badges.append("VERIFIED")
+    if listing.get("sold"):
+        badges.append("SOLD")
+    if risk_level:
+        badges.append(f"{risk_level} risk")
+    label = f"{listing.get('heading') or 'Land for sale'} - {' | '.join(badges)}"
+
+    with st.expander(label):
+        st.text_area(
+            "Raw text pasted by seller", value=listing.get("raw_text", ""), height=100,
+            disabled=True, key=f"raw_{listing['id']}",
+        )
+
+        col1, col2 = st.columns(2)
+        col1.markdown(f"**Size:** {listing.get('size') or '—'}")
+        col1.markdown(f"**Price:** {listing.get('price') or '—'}")
+        col2.markdown(f"**Location:** {listing.get('location') or '—'}")
+        col2.markdown(f"**Title:** {listing.get('title_type') or '—'}")
+        if listing.get("fee_note"):
+            st.markdown(f"**Fee note:** {listing['fee_note']}")
+        st.markdown(f"**Contact:** {listing.get('seller_contact') or '—'}")
+        seller_wa_link = listing_format.seller_whatsapp_link(listing.get("seller_contact", ""), listing.get("heading", ""))
+        if seller_wa_link:
+            st.markdown(f"[Message seller on WhatsApp]({seller_wa_link})")
+        st.caption(f"Submitted {listing.get('submitted_at', '?')}")
+
+        if listing.get("risk_result"):
+            st.markdown(f"**Automated risk check: {listing['risk_level']}**")
+            for finding in listing["risk_result"].get("findings", []):
+                st.caption(f"- {finding}")
+        elif listing.get("coordinates_text"):
+            if st.button("Run risk check now", key=f"run_check_{listing['id']}"):
+                try:
+                    # Reuses the exact projection the seller picked at
+                    # submission (utils/listings.py's coordinate_epsg) -
+                    # re-guessing here could silently convert the same
+                    # Northing/Easting pair to a different real-world
+                    # location than what the seller actually meant.
+                    points, _, _, _ = coordinates.parse_coordinate_text(
+                        listing["coordinates_text"], forced_epsg=listing.get("coordinate_epsg")
+                    )
+                    if not points:
+                        st.error("Couldn't extract coordinates from the submitted text.")
+                    else:
+                        boundary_issue = gis_processing.check_boundary_validity(points) if len(points) >= 3 else None
+                        if boundary_issue:
+                            st.error(boundary_issue)
+                        else:
+                            neighbors_gdf = gis_processing.load_neighboring_plots()
+                            user_gdf = gis_processing.build_user_plot_gdf(points)
+                            overlap_result = gis_processing.analyze_overlap(user_gdf, neighbors_gdf)
+                            risk_result = risk_calculator.calculate_risk(
+                                points, overlap_result, boundary_is_measured=len(points) >= 3
+                            )
+                            listings.update_listing(
+                                listing["id"], points=points,
+                                risk_level=risk_result["risk_level"], risk_result=risk_result,
+                            )
+                            st.success(f"Risk check complete: {risk_result['risk_level']}")
+                            st.rerun()
+                except Exception as exc:
+                    traceback.print_exc()
+                    st.error(f"Risk check failed: {exc}")
+        else:
+            st.caption("No coordinates were submitted - use the override below to set a rating by hand.")
+
+        override_options = ["(none)", "Low", "Medium", "High"]
+        current_override = listing.get("admin_risk_override")
+        override = st.selectbox(
+            "Risk rating override", override_options,
+            index=override_options.index(current_override) if current_override in override_options else 0,
+            key=f"override_{listing['id']}",
+        )
+        if st.button("Save override", key=f"save_override_{listing['id']}"):
+            listings.update_listing(listing["id"], admin_risk_override=None if override == "(none)" else override)
+            st.rerun()
+
+        verified = st.checkbox(
+            "Mark PlotProof Verification as paid", value=listing.get("verified", False), key=f"verified_{listing['id']}"
+        )
+        if verified != listing.get("verified", False):
+            listings.update_listing(listing["id"], verified=verified)
+            st.rerun()
+
+        if listing["status"] == listings.STATUS_PUBLISHED:
+            sold = st.checkbox(
+                "Mark as Sold (removes it from the public Browse Listings page)",
+                value=listing.get("sold", False), key=f"sold_{listing['id']}",
+            )
+            if sold != listing.get("sold", False):
+                listings.update_listing(
+                    listing["id"], sold=sold,
+                    sold_at=datetime.now(timezone.utc).isoformat() if sold else None,
+                )
+                st.rerun()
+
+        col_pub, col_rej, col_del = st.columns(3)
+        if listing["status"] != listings.STATUS_PUBLISHED:
+            if col_pub.button("Publish", key=f"publish_{listing['id']}", type="primary"):
+                listings.update_listing(
+                    listing["id"], status=listings.STATUS_PUBLISHED,
+                    reviewed_at=datetime.now(timezone.utc).isoformat(),
+                )
+                st.rerun()
+        if listing["status"] != listings.STATUS_REJECTED:
+            if col_rej.button("Reject", key=f"reject_{listing['id']}"):
+                listings.update_listing(
+                    listing["id"], status=listings.STATUS_REJECTED,
+                    reviewed_at=datetime.now(timezone.utc).isoformat(),
+                )
+                st.rerun()
+        if col_del.button("Delete", key=f"delete_{listing['id']}"):
+            listings.delete_listing(listing["id"])
+            st.rerun()
+
+        if listing["status"] == listings.STATUS_PUBLISHED:
+            st.divider()
+            st.markdown("**Share this listing**")
+            listing_url = f"{app_url}/listings"
+            plotproof_contact = app_config.get_plotproof_contact_number() or ""
+            post_text = listing_format.format_listing_post(listing, listing_url, plotproof_contact)
+            st.code(post_text, language=None)
+            share_links = listing_format.build_share_links(post_text, listing_url)
+            st.markdown(
+                f"""
+                <div class="pp-cta-row">
+                  <a class="pp-cta pp-cta--solid" href="{share_links['whatsapp']}" target="_blank">WhatsApp</a>
+                  <a class="pp-cta pp-cta--outline" href="{share_links['twitter']}" target="_blank">X / Twitter</a>
+                  <a class="pp-cta pp-cta--outline" href="{share_links['telegram']}" target="_blank">Telegram</a>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+
+with tab_listings:
+    LISTINGS_APP_URL = os.environ.get("APP_URL", "https://plotproof.streamlit.app")
+    st.caption(
+        "Every submitted listing starts hidden until published here. Set/override the risk "
+        "rating, mark verification as paid, then publish - published listings get pre-filled "
+        "share links below."
+    )
+
+    st.markdown("**PlotProof contact number**")
+    st.caption(
+        "Shown to buyers on every public listing (never the seller's own number) - PlotProof "
+        "stays the point of contact on both sides. A seller's own contact info is still "
+        "collected at submission (visible per-listing below) so an admin can reach them once a "
+        "buyer's interest comes in."
+    )
+    current_contact = app_config.get_plotproof_contact_number()
+    st.text_input("Current number", value=current_contact or "(not set)", disabled=True)
+    with st.form("plotproof_contact_form", clear_on_submit=True):
+        new_contact = st.text_input("New number", placeholder="0801 234 5678")
+        if st.form_submit_button("Save number", type="primary"):
+            if new_contact.strip():
+                app_config.set_plotproof_contact_number(new_contact)
+                st.success("Contact number updated.")
+                st.rerun()
+            else:
+                st.error("Enter a number before saving.")
+    if current_contact and st.button("Clear contact number"):
+        app_config.clear_plotproof_contact_number()
+        st.rerun()
+
+    st.divider()
+    all_listings = listings.list_listings()
+    pending_listings = [l for l in all_listings if l["status"] == listings.STATUS_PENDING]
+    other_listings = [l for l in all_listings if l["status"] != listings.STATUS_PENDING]
+
+    st.markdown(f"**Pending review ({len(pending_listings)})**")
+    if not pending_listings:
+        st.info("No listings waiting for review.")
+    for pending_listing in pending_listings:
+        _render_admin_listing(pending_listing, LISTINGS_APP_URL)
+
+    st.divider()
+    st.markdown(f"**Published / rejected ({len(other_listings)})**")
+    if not other_listings:
+        st.caption("Nothing here yet.")
+    for other_listing in other_listings:
+        _render_admin_listing(other_listing, LISTINGS_APP_URL)

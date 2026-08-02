@@ -97,7 +97,13 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" --max-time 5 http://localhost:8560)",
       "Bash(/Users/GEOTECHIEX/Sites/landSuite/.venv/bin/python /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/verify_fallback_e2e.py)",
       "Bash(sed -i '' 's|http://localhost:8562|http://localhost:8563|' /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/verify_fallback_e2e.py)",
-      "Bash(sed -i '' 's|page.get_by_label\\(\"Admin password\"\\).fill\\(\"testpass123\"\\)\\\\n    page.get_by_role\\(\"button\", name=\"Sign in\"\\).click\\(\\)\\\\n    page.wait_for_timeout\\(1200\\)||' /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/verify_fallback_e2e.py)"
+      "Bash(sed -i '' 's|page.get_by_label\\(\"Admin password\"\\).fill\\(\"testpass123\"\\)\\\\n    page.get_by_role\\(\"button\", name=\"Sign in\"\\).click\\(\\)\\\\n    page.wait_for_timeout\\(1200\\)||' /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/verify_fallback_e2e.py)",
+      "Bash(ADMIN_PASSWORD=testpass123 .venv/bin/streamlit run app.py --server.headless true --server.port 8580)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8580)",
+      "Bash(/Users/GEOTECHIEX/Sites/landSuite/.venv/bin/python /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/verify_contact_e2e.py)",
+      "Bash(sed -i '' 's|8590|8591|' /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/verify_contact_e2e.py)",
+      "Bash(ADMIN_PASSWORD=testpass123 .venv/bin/streamlit run mini_app_test.py --server.headless true --server.port 8595)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8595)"
     ]
   }
 }

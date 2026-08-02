@@ -2,7 +2,7 @@
 Navigation entrypoint - kept deliberately thin.
 
 The actual app content lives in app_home.py/pages/about.py/pages/faq.py/
-pages/investment_analysis.py;
+pages/investment_analysis.py/pages/listings.py;
 this file only wires up st.navigation(). position="hidden" turns off
 Streamlit's own built-in nav UI (which would otherwise auto-list every
 page, including the admin portal, in a visible sidebar for any visitor) -
@@ -32,6 +32,7 @@ home = st.Page("app_home.py", title="PlotProof", default=True)
 about = st.Page("pages/about.py", title="About & Legal", url_path="about")
 faq = st.Page("pages/faq.py", title="Common Questions", url_path="faq")
 investment = st.Page("pages/investment_analysis.py", title="Investment Analysis", url_path="investment-analysis")
+listings = st.Page("pages/listings.py", title="Land Listings", url_path="listings")
 admin = st.Page("pages/admin_review.py", title="Admin", url_path=ADMIN_URL_PATH)
 
-st.navigation([home, about, faq, investment, admin], position="hidden").run()
+st.navigation([home, about, faq, investment, listings, admin], position="hidden").run()

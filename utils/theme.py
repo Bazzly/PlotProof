@@ -518,6 +518,45 @@ def get_css() -> str:
 .pp-price-value {{ font-size: 1.4rem; font-weight: 800; color: var(--pp-ink-primary); margin: var(--pp-space-2) 0; }}
 .pp-price-caveat {{ font-style: italic; font-weight: 600; color: #8a5a00; margin-top: var(--pp-space-2); }}
 
+/* ---- land listings (pages/listings.py) - extends .pp-card, same
+   light theme and status colors as the rest of the app, not a separate
+   visual language ---- */
+.pp-listing-card {{
+  position: relative;
+  background: var(--pp-surface);
+  border: 1px solid var(--pp-border);
+  border-radius: var(--pp-radius);
+  padding: var(--pp-space-4);
+  margin-bottom: var(--pp-space-4);
+}}
+.pp-listing-heading {{
+  font-family: var(--pp-font-heading);
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: var(--pp-ink-primary);
+  margin: 0 0 var(--pp-space-2);
+  padding-right: 90px;
+}}
+.pp-listing-meta {{ color: var(--pp-ink-secondary); font-size: 0.92rem; margin: 2px 0; }}
+.pp-listing-meta strong {{ color: var(--pp-ink-primary); }}
+.pp-verified-ribbon {{
+  position: absolute;
+  top: var(--pp-space-4);
+  right: var(--pp-space-4);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--pp-good) 14%, var(--pp-surface));
+  border: 1px solid var(--pp-good);
+  color: var(--pp-good);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}}
+
 /* ---- footer ---- */
 .pp-footer {{
   text-align: center;

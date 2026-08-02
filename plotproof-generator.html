@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PlotProof — Listing Stamp Generator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg-deep:#0A1420;
+    --bg-panel:#101D2E;
+    --bg-panel-2:#0D1826;
+    --line-grid:rgba(124,147,172,0.10);
+    --accent-stake:#F2B705;
+    --accent-stake-dim:#8a6c0e;
+    --accent-verified:#29C48D;
+    --text-primary:#EAF1F8;
+    --text-muted:#7E93AC;
+    --danger:#E0654F;
+    --radius:10px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:
+      linear-gradient(var(--line-grid) 1px, transparent 1px) 0 0/38px 38px,
+      linear-gradient(90deg, var(--line-grid) 1px, transparent 1px) 0 0/38px 38px,
+      var(--bg-deep);
+    color:var(--text-primary);
+    font-family:'Inter',sans-serif;
+    min-height:100vh;
+    padding:32px 20px 60px;
+  }
+  .wrap{max-width:1180px;margin:0 auto;}
+
+  header.top{
+    display:flex;
+    align-items:flex-end;
+    justify-content:space-between;
+    gap:24px;
+    margin-bottom:28px;
+    flex-wrap:wrap;
+    border-bottom:1px solid var(--line-grid);
+    padding-bottom:20px;
+  }
+  .brand{display:flex;align-items:center;gap:14px;}
+  .brand-mark{
+    width:44px;height:44px;border-radius:50%;
+    border:2px solid var(--accent-stake);
+    display:flex;align-items:center;justify-content:center;
+    font-family:'JetBrains Mono',monospace;
+    font-size:11px;color:var(--accent-stake);
+    position:relative;flex-shrink:0;
+  }
+  .brand-mark::after{
+    content:"";
+    position:absolute;inset:-6px;
+    border:1px dashed rgba(242,183,5,0.35);
+    border-radius:50%;
+  }
+  .brand h1{
+    font-family:'Space Grotesk',sans-serif;
+    font-size:22px;font-weight:700;margin:0;letter-spacing:0.2px;
+  }
+  .brand p{margin:2px 0 0;font-size:12.5px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;}
+  .counter-badge{
+    font-family:'JetBrains Mono',monospace;
+    font-size:12px;color:var(--text-muted);
+    text-align:right;
+  }
+  .counter-badge strong{
+    display:block;font-size:26px;color:var(--accent-stake);
+    font-family:'Space Grotesk',sans-serif;font-weight:600;
+  }
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;}
+  @media (max-width:920px){.grid{grid-template-columns:1fr;}}
+
+  .panel{
+    background:var(--bg-panel);
+    border:1px solid var(--line-grid);
+    border-radius:var(--radius);
+    padding:22px;
+  }
+  .panel h2{
+    font-family:'Space Grotesk',sans-serif;
+    font-size:14px;text-transform:uppercase;letter-spacing:1.2px;
+    color:var(--text-muted);margin:0 0 14px;
+    display:flex;align-items:center;gap:8px;
+  }
+  .panel h2 .dot{width:6px;height:6px;border-radius:50%;background:var(--accent-stake);display:inline-block;}
+
+  textarea{
+    width:100%;min-height:150px;
+    background:var(--bg-panel-2);
+    border:1px solid var(--line-grid);
+    border-radius:8px;
+    color:var(--text-primary);
+    font-family:'JetBrains Mono',monospace;
+    font-size:13px;line-height:1.6;
+    padding:12px;resize:vertical;
+  }
+  textarea:focus, input:focus{outline:2px solid var(--accent-stake);outline-offset:1px;}
+
+  .field-row{display:grid;grid-template-columns:96px 1fr;gap:10px;align-items:center;margin-top:10px;}
+  .field-row label{font-size:11.5px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.5px;}
+  .field-row input{
+    background:var(--bg-panel-2);
+    border:1px solid var(--line-grid);
+    border-radius:6px;color:var(--text-primary);
+    font-family:'JetBrains Mono',monospace;font-size:13px;
+    padding:8px 10px;width:100%;
+  }
+
+  .btn-row{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap;}
+  button{
+    font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:13px;
+    padding:10px 18px;border-radius:8px;border:none;cursor:pointer;
+    transition:transform 0.12s ease, opacity 0.12s ease;
+  }
+  button:active{transform:scale(0.97);}
+  .btn-primary{background:var(--accent-stake);color:#1a1400;}
+  .btn-primary:hover{opacity:0.9;}
+  .btn-ghost{background:transparent;border:1px solid var(--line-grid);color:var(--text-primary);}
+  .btn-ghost:hover{border-color:var(--accent-stake);}
+  .btn-copy{background:var(--accent-verified);color:#052a1c;}
+  .btn-copy:hover{opacity:0.9;}
+  .hint{font-size:11.5px;color:var(--text-muted);margin-top:8px;line-height:1.5;}
+
+  /* Output stamp card */
+  .stamp-card{
+    background:var(--bg-panel-2);
+    border:1px solid var(--line-grid);
+    border-radius:8px;
+    padding:20px;position:relative;overflow:hidden;
+  }
+  .stamp{
+    position:absolute;top:14px;right:16px;
+    width:88px;height:88px;border-radius:50%;
+    border:2.5px solid var(--accent-verified);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    transform:rotate(-14deg);
+    color:var(--accent-verified);
+    font-family:'Space Grotesk',sans-serif;
+    text-align:center;line-height:1.15;
+    opacity:0.9;
+  }
+  .stamp::before{
+    content:"";position:absolute;inset:-6px;border:1px dashed rgba(41,196,141,0.4);border-radius:50%;
+  }
+  .stamp span{font-size:9px;letter-spacing:0.6px;font-weight:700;}
+  .stamp .check{font-size:18px;line-height:1;margin-bottom:2px;}
+
+  pre#outputText{
+    white-space:pre-wrap;word-wrap:break-word;
+    font-family:'JetBrains Mono',monospace;
+    font-size:13.5px;line-height:1.75;
+    margin:0;padding-right:100px;
+    color:var(--text-primary);
+    min-height:220px;
+  }
+  .placeholder{color:var(--text-muted);font-style:italic;}
+
+  .log{margin-top:18px;}
+  .log-item{
+    display:flex;justify-content:space-between;gap:10px;
+    font-family:'JetBrains Mono',monospace;font-size:12px;
+    color:var(--text-muted);
+    padding:8px 0;border-top:1px solid var(--line-grid);
+  }
+  .log-item span.tag{color:var(--accent-stake);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="brand">
+      <div class="brand-mark">GX</div>
+      <div>
+        <h1>PlotProof Listing Stamp</h1>
+        <p>paste a raw description → get a branded, verification-led WhatsApp post</p>
+      </div>
+    </div>
+    <div class="counter-badge">
+      NEXT ALERT NO.
+      <strong id="counterDisplay">—</strong>
+    </div>
+  </header>
+
+  <div class="grid">
+
+    <!-- LEFT: INTAKE -->
+    <div class="panel">
+      <h2><span class="dot"></span>Intake — paste description</h2>
+      <textarea id="rawInput" placeholder="Residential Land for Sale !!!
+Size: 1,200 Sqm
+Price: 450M Naira
+Location: Kado - Abuja (Tarred Road)
+Title: C of O
+Brokers fee applies"></textarea>
+
+      <div class="btn-row">
+        <button class="btn-primary" onclick="parseInput()">Parse fields</button>
+        <button class="btn-ghost" onclick="clearAll()">Clear</button>
+      </div>
+
+      <h2 style="margin-top:22px;"><span class="dot"></span>Fields (edit if parsing missed anything)</h2>
+      <div class="field-row"><label>Heading</label><input id="f_heading" placeholder="Residential Land for Sale"></div>
+      <div class="field-row"><label>Size</label><input id="f_size" placeholder="1,200 Sqm"></div>
+      <div class="field-row"><label>Price</label><input id="f_price" placeholder="₦450,000,000"></div>
+      <div class="field-row"><label>Location</label><input id="f_location" placeholder="Kado - Abuja (Tarred Road)"></div>
+      <div class="field-row"><label>Title</label><input id="f_title" placeholder="C of O"></div>
+      <div class="field-row"><label>Fee note</label><input id="f_fee" placeholder="Brokers fee applies"></div>
+      <div class="field-row"><label>Hashtags</label><input id="f_tags" placeholder="#PlotProofVerified #AbujaLand"></div>
+
+      <div class="btn-row">
+        <button class="btn-primary" onclick="generatePost()">Generate post</button>
+      </div>
+      <p class="hint">Parsing looks for lines like "Size:", "Price:", "Location:", "Title:", and any line mentioning "fee". The first line becomes the heading. Nothing recognized? Just fill the fields by hand — generation works either way.</p>
+    </div>
+
+    <!-- RIGHT: OUTPUT -->
+    <div class="panel">
+      <h2><span class="dot"></span>Verified post — ready to send</h2>
+      <div class="stamp-card">
+        <div class="stamp"><div class="check">✓</div><span>PLOTPROOF</span><span>VERIFIED</span></div>
+        <pre id="outputText"><span class="placeholder">Your generated post will appear here.</span></pre>
+      </div>
+      <div class="btn-row">
+        <button class="btn-copy" onclick="copyOutput()">Copy to clipboard</button>
+        <button class="btn-ghost" onclick="regenNumberOnly()">Re-roll alert number</button>
+      </div>
+      <div id="copyStatus" class="hint"></div>
+
+      <div class="log">
+        <h2 style="margin-top:22px;"><span class="dot"></span>Recent alerts (shared with your team)</h2>
+        <div id="logList"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+let currentAlertNo = null;
+
+async function initCounter(){
+  try{
+    const res = await window.storage.get('plotproof:counter', true);
+    currentAlertNo = res ? parseInt(res.value, 10) : 0;
+  }catch(e){
+    currentAlertNo = 0;
+  }
+  document.getElementById('counterDisplay').textContent = String(currentAlertNo + 1).padStart(3,'0');
+  loadLog();
+}
+
+async function loadLog(){
+  const listEl = document.getElementById('logList');
+  try{
+    const res = await window.storage.get('plotproof:log', true);
+    const log = res ? JSON.parse(res.value) : [];
+    if(log.length === 0){
+      listEl.innerHTML = '<p class="hint">No alerts posted yet.</p>';
+      return;
+    }
+    listEl.innerHTML = log.slice(0,8).map(item =>
+      `<div class="log-item"><span><span class="tag">#${item.id}</span> ${item.heading} — ${item.location}</span><span>${item.price}</span></div>`
+    ).join('');
+  }catch(e){
+    listEl.innerHTML = '<p class="hint">No alerts posted yet.</p>';
+  }
+}
+
+async function saveLogEntry(entry){
+  try{
+    const res = await window.storage.get('plotproof:log', true);
+    const log = res ? JSON.parse(res.value) : [];
+    log.unshift(entry);
+    await window.storage.set('plotproof:log', JSON.stringify(log.slice(0,20)), true);
+  }catch(e){
+    await window.storage.set('plotproof:log', JSON.stringify([entry]), true);
+  }
+  loadLog();
+}
+
+function grabLine(text, label){
+  const re = new RegExp(label + '\\s*:?\\s*([^\\n]+)', 'i');
+  const m = text.match(re);
+  return m ? m[1].trim().replace(/[.,;]+$/,'') : '';
+}
+
+function parseInput(){
+  const raw = document.getElementById('rawInput').value;
+  if(!raw.trim()){ return; }
+
+  const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
+  const heading = lines.length ? lines[0].replace(/!+$/,'').trim() : '';
+
+  document.getElementById('f_heading').value = heading;
+  document.getElementById('f_size').value = grabLine(raw, 'size');
+  document.getElementById('f_price').value = grabLine(raw, 'price');
+  document.getElementById('f_location').value = grabLine(raw, 'location');
+  document.getElementById('f_title').value = grabLine(raw, 'title');
+
+  const feeMatch = raw.match(/[^\n]*fee[^\n]*/i);
+  document.getElementById('f_fee').value = feeMatch ? feeMatch[0].trim() : 'Brokers fee applies';
+
+  if(!document.getElementById('f_tags').value){
+    document.getElementById('f_tags').value = '#PlotProofVerified #LandForSale #NoLandGrabbing';
+  }
+}
+
+async function generatePost(){
+  const heading = document.getElementById('f_heading').value || 'Land For Sale';
+  const size = document.getElementById('f_size').value || '—';
+  const price = document.getElementById('f_price').value || '—';
+  const location = document.getElementById('f_location').value || '—';
+  const title = document.getElementById('f_title').value || '—';
+  const fee = document.getElementById('f_fee').value || 'Brokers fee applies';
+  const tags = document.getElementById('f_tags').value || '#PlotProofVerified #LandForSale';
+
+  let alertNo;
+  try{
+    const res = await window.storage.get('plotproof:counter', true);
+    alertNo = (res ? parseInt(res.value, 10) : 0) + 1;
+    await window.storage.set('plotproof:counter', String(alertNo), true);
+  }catch(e){
+    alertNo = 1;
+  }
+  currentAlertNo = alertNo;
+  const alertTag = String(alertNo).padStart(3,'0');
+  document.getElementById('counterDisplay').textContent = String(alertNo + 1).padStart(3,'0');
+
+  const post =
+`🟢 PLOTPROOF VERIFIED LISTING
+📍 Land Alert #${alertTag}
+
+🏡 ${heading}
+📐 Size: ${size}
+💰 Price: ${price}
+📌 Location: ${location}
+📄 Title: ${title}
+🤝 ${fee}
+
+✅ Boundary-checked with PlotProof — verify before you buy.
+🔗 plotproof.streamlit.app
+
+📞 DM/Call to schedule an inspection.
+${tags}`;
+
+  document.getElementById('outputText').textContent = post;
+
+  saveLogEntry({id: alertTag, heading, location, price});
+}
+
+function regenNumberOnly(){
+  const outputEl = document.getElementById('outputText');
+  if(!outputEl.textContent || outputEl.querySelector('.placeholder')) return;
+  generatePost();
+}
+
+function clearAll(){
+  document.getElementById('rawInput').value = '';
+  ['f_heading','f_size','f_price','f_location','f_title','f_fee','f_tags'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('outputText').innerHTML = '<span class="placeholder">Your generated post will appear here.</span>';
+  document.getElementById('copyStatus').textContent = '';
+}
+
+function copyOutput(){
+  const text = document.getElementById('outputText').textContent;
+  const status = document.getElementById('copyStatus');
+  if(!text || text.includes('Your generated post will appear here')){
+    status.textContent = 'Generate a post first.';
+    return;
+  }
+  navigator.clipboard.writeText(text).then(() => {
+    status.textContent = 'Copied — paste straight into WhatsApp.';
+    setTimeout(() => status.textContent = '', 2500);
+  }).catch(() => {
+    status.textContent = 'Could not copy automatically — select the text and copy manually.';
+  });
+}
+
+initCounter();
+</script>
+</body>
+</html>

@@ -1,5 +1,8 @@
 """
-Runtime-editable app configuration - currently just the Anthropic API key.
+Runtime-editable app configuration - the Anthropic API key, and the
+PlotProof WhatsApp contact number used as the intermediary contact point
+for Land Listings (pages/listings.py) - see get_plotproof_contact_number()'s
+docstring for why that one exists.
 
 Why this exists: this repo is public, so ANTHROPIC_API_KEY can't live in
 committed source, and rotating an env-var-based key normally means editing
@@ -7,7 +10,9 @@ Streamlit Cloud's Secrets panel and waiting for a redeploy. This module lets
 the key be viewed (masked) and rotated from the admin portal
 (pages/admin_review.py) instead, taking effect immediately for the running
 process - no redeploy, no code/secrets-panel access needed for routine
-rotation.
+rotation. The same runtime-editable mechanism is reused for the listings
+contact number since that's also something admin staff should be able to
+change without a redeploy (e.g. switching to a different support line).
 
 Resolution order: a key set via the admin portal always wins over the
 ANTHROPIC_API_KEY environment variable, so a compromised/leaked key (e.g.
@@ -38,6 +43,7 @@ _SUPABASE_URL = os.environ.get("SUPABASE_URL")
 _SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
 ANTHROPIC_API_KEY_SETTING = "anthropic_api_key"
+PLOTPROOF_CONTACT_SETTING = "plotproof_contact_number"
 
 
 def _storage_backend() -> str:
@@ -113,6 +119,28 @@ def clear_anthropic_api_key() -> None:
     """Removes the admin-set override, falling back to ANTHROPIC_API_KEY
     from the environment (if any)."""
     clear_setting(ANTHROPIC_API_KEY_SETTING)
+
+
+def get_plotproof_contact_number() -> Optional[str]:
+    """The WhatsApp number shown to a buyer who wants to enquire about a
+    Land Listing (pages/listings.py) - PlotProof's own number, not the
+    seller's. A seller's contact info is still collected at submission
+    time (utils/listings.py's seller_contact field), but it's used
+    internally by an admin to actually reach the seller once a buyer's
+    interest comes in via this number - PlotProof stays the point of
+    contact on both sides, rather than publishing a seller's personal
+    number on a public listing. Admin-portal override (same mechanism as
+    get_anthropic_api_key()) wins over the PLOTPROOF_CONTACT_NUMBER env
+    var, so it can be changed without a redeploy."""
+    return get_setting(PLOTPROOF_CONTACT_SETTING) or os.environ.get("PLOTPROOF_CONTACT_NUMBER") or None
+
+
+def set_plotproof_contact_number(value: str) -> None:
+    set_setting(PLOTPROOF_CONTACT_SETTING, value.strip())
+
+
+def clear_plotproof_contact_number() -> None:
+    clear_setting(PLOTPROOF_CONTACT_SETTING)
 
 
 def mask_key(value: Optional[str]) -> str:
