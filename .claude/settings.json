@@ -103,7 +103,9 @@
       "Bash(/Users/GEOTECHIEX/Sites/landSuite/.venv/bin/python /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/verify_contact_e2e.py)",
       "Bash(sed -i '' 's|8590|8591|' /private/tmp/claude-502/-Users-GEOTECHIEX-Sites-landSuite/44750a44-8e38-4bf0-a0c7-aefe2c4eb692/scratchpad/verify_contact_e2e.py)",
       "Bash(ADMIN_PASSWORD=testpass123 .venv/bin/streamlit run mini_app_test.py --server.headless true --server.port 8595)",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8595)"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8595)",
+      "Bash(ADMIN_PASSWORD=testpass123 .venv/bin/streamlit run mini_app_test.py --server.headless true --server.port 8600)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8600)"
     ]
   }
 }

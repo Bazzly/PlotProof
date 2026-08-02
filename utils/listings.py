@@ -44,6 +44,7 @@ first - schema below).
         admin_risk_override text,
         verification_requested boolean,
         verified boolean,
+        alert_number integer,
         sold boolean,
         sold_at timestamptz,
         submitted_at timestamptz,
@@ -116,6 +117,18 @@ def effective_risk_level(listing: dict) -> Optional[str]:
     return listing.get("admin_risk_override") or listing.get("risk_level")
 
 
+def next_alert_number() -> int:
+    """The next sequential "Land Alert #NNN" number (utils/listing_format.
+    format_listing_post()) - derived from the highest number already
+    assigned rather than a dedicated counter row/file, since this app's
+    publish volume is low and a rare duplicate on a genuine race is a
+    cosmetic, not correctness, issue. Assign once per listing (at publish
+    time - see pages/admin_review.py) and never reassign, so a listing's
+    number - its public signature - stays stable across edits/republishing."""
+    existing = [r["alert_number"] for r in list_listings() if r.get("alert_number")]
+    return (max(existing) + 1) if existing else 1
+
+
 def list_published_ranked() -> List[dict]:
     """Verified listings first, then by risk (Low > Medium > High >
     unrated), then newest - the public Browse Listings ranking. Excludes
@@ -167,6 +180,7 @@ def add_listing(**fields) -> str:
         "admin_risk_override": None,
         "verification_requested": False,
         "verified": False,
+        "alert_number": None,
         "sold": False,
         "sold_at": None,
         "submitted_at": datetime.now(timezone.utc).isoformat(),

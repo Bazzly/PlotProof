@@ -73,9 +73,13 @@ def parse_listing_text(raw: str) -> dict:
 def format_listing_post(listing: dict, listing_url: str = "", plotproof_contact: str = "") -> str:
     """The branded, shareable post text - shown in the admin's copyable
     st.code block and used to build the pre-filled share links below.
-    Reflects the listing's real state: only says "PLOTPROOF VERIFIED"
-    when utils/listings.py's `verified` is actually true, and only shows
-    a risk badge when a rating (automated or admin-set - see
+    The header + Land Alert line are always present (a consistent
+    PlotProof signature on every post, "this was posted through
+    PlotProof"), but the header wording still reflects the listing's real
+    state: only says "VERIFIED" when utils/listings.py's `verified` is
+    actually true - never a trust claim that isn't real, even though the
+    signature itself always appears. Risk badge likewise only shows when
+    a rating (automated or admin-set - see
     utils/listings.effective_risk_level()) actually exists.
 
     plotproof_contact: PlotProof's own number (utils/app_config.py) -
@@ -87,7 +91,10 @@ def format_listing_post(listing: dict, listing_url: str = "", plotproof_contact:
     risk_level = listings.effective_risk_level(listing)
     verified = bool(listing.get("verified"))
 
-    lines = ["✅ PLOTPROOF VERIFIED LISTING" if verified else "📋 LAND LISTING", ""]
+    lines = ["🟢 PLOTPROOF VERIFIED LISTING" if verified else "🟢 PLOTPROOF LISTING"]
+    if listing.get("alert_number"):
+        lines.append(f"📍 Land Alert #{listing['alert_number']:03d}")
+    lines.append("")
 
     if listing.get("heading"):
         lines.append(f"🏡 {listing['heading']}")

@@ -452,6 +452,8 @@ with tab_invest:
 def _render_admin_listing(listing: dict, app_url: str) -> None:
     risk_level = listings.effective_risk_level(listing)
     badges = [listing["status"]]
+    if listing.get("alert_number"):
+        badges.append(f"Alert #{listing['alert_number']:03d}")
     if listing.get("verification_requested"):
         badges.append("verification requested")
     if listing.get("verified"):
@@ -557,6 +559,11 @@ def _render_admin_listing(listing: dict, app_url: str) -> None:
                 listings.update_listing(
                     listing["id"], status=listings.STATUS_PUBLISHED,
                     reviewed_at=datetime.now(timezone.utc).isoformat(),
+                    # Assigned once, kept forever after - a listing's Land
+                    # Alert number is its public signature, so re-publishing
+                    # (e.g. after a reject/undo) must never hand out a new
+                    # one if it already has one.
+                    alert_number=listing.get("alert_number") or listings.next_alert_number(),
                 )
                 st.rerun()
         if listing["status"] != listings.STATUS_REJECTED:
