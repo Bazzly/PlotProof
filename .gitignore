@@ -11,6 +11,7 @@ data/land_chat/
 data/investment_reports/
 data/investment_fallback/
 data/listings/
+data/property_requests/
 .streamlit/secrets.toml
 ADMIN_ACCESS.md
 /product

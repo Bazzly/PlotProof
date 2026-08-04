@@ -1,27 +1,37 @@
 """
-Parsing and formatting for the Land Listings marketplace
-(pages/listings.py, utils/listings.py).
+Parsing and formatting for PlotProof's marketplace pages (pages/listings.py)
+- both directions: Land Listings (a seller's land, utils/listings.py) and
+Property Requests (a verified buyer's ask, utils/property_requests.py).
 
-parse_listing_text() is a Python port of the field-extraction regexes
-from the standalone plotproof-generator.html prototype (grabLine()-style:
-first line -> heading, "Size:"/"Price:"/"Location:"/"Title:" lines, any
-line mentioning "fee") - used to prefill a seller's editable fields from
-whatever they pasted, same UX the prototype demonstrated, just server-side
-in Python instead of client-side JS.
+parse_listing_text()/parse_property_request_text() are a Python port of
+the field-extraction regexes from the standalone plotproof-generator.html
+prototype (grabLine()-style: first line -> heading, labeled lines for the
+rest) - used to prefill editable fields from pasted free text, same UX
+the prototype demonstrated, just server-side in Python instead of client-
+side JS. Land Listings are pasted by a seller (pages/listings.py's "Sell
+Your Land" tab); Property Requests are pasted by an admin only
+(pages/admin_review.py's "Property Requests" tab) - there's no public
+submission form for those, since a request represents a buyer PlotProof
+has already vetted, not an open submission.
 
-format_listing_post() is the same emoji-formatted share template in
-spirit, but driven by the listing's REAL risk_level/verified fields
-(utils/listings.py) instead of always claiming "VERIFIED" - an unverified,
-unrated listing gets an honest, different-looking post, never a fake
-badge.
+format_listing_post()/format_property_request_post() are the matching
+emoji-formatted share templates - both always lead with a PlotProof
+signature line + a stable sequential number (utils/listings.next_alert_number()
+/ utils/property_requests.next_request_number() - two independent
+sequences, "Land Alert #NNN" vs "Request #NNN"), but format_listing_post()
+still only says "VERIFIED" when utils/listings.py's `verified` is actually
+true - an unverified, unrated listing gets an honest, different-looking
+post, never a fake badge.
 
-PlotProof stays the intermediary on contact: a listing's public contact
-line (both here and on the Browse Listings page) points at PlotProof's
-own WhatsApp number (utils/app_config.get_plotproof_contact_number(),
-admin-set), built by plotproof_contact_link() - never the seller's own
-number, which is collected at submission but used only internally so an
-admin can reach the seller once a buyer's interest comes in
-(seller_whatsapp_link(), used from the admin portal only).
+PlotProof stays the intermediary on contact, in both directions: a
+listing's public contact line points at PlotProof's own WhatsApp number
+(utils/app_config.get_plotproof_contact_number(), admin-set), built by
+plotproof_contact_link() - never the seller's own number, which is
+collected at submission but used only internally so an admin can reach
+the seller once a buyer's interest comes in (seller_whatsapp_link(), used
+from the admin portal only). A Property Request works the same way in
+reverse: anyone with matching land contacts PlotProof (the same number),
+not the buyer directly, to arrange a physical meeting.
 
 build_share_links()/seller_whatsapp_link()/plotproof_contact_link() are
 new - no wa.me/Twitter-intent/Telegram share-link construction existed
@@ -190,4 +200,81 @@ def plotproof_contact_link(listing: dict, contact_number: str) -> Optional[str]:
     digits = _to_international_ng(digits)
     heading = listing.get("heading") or "Land for sale"
     message = f'Hi PlotProof, I\'m interested in this listing: "{heading}" (ref #{listing["id"]}). Can you connect me with the seller?'
+    return f"https://wa.me/{digits}?text={urllib.parse.quote(message)}"
+
+
+def parse_property_request_text(raw: str) -> dict:
+    """Same best-effort extraction as parse_listing_text(), for an
+    admin's pasted description of a buyer's request instead of a
+    seller's sales text - "Budget"/"Price Range"/"Price" (tried in that
+    order), "Location", "Size" lines, first line as heading."""
+    raw = raw or ""
+    lines = [line.strip() for line in raw.split("\n") if line.strip()]
+    heading = re.sub(r"!+$", "", lines[0]).strip() if lines else ""
+
+    price_range = _grab_line(raw, "budget") or _grab_line(raw, "price range") or _grab_line(raw, "price")
+
+    return {
+        "heading": heading,
+        "price_range": price_range,
+        "location": _grab_line(raw, "location"),
+        "size": _grab_line(raw, "size"),
+    }
+
+
+def format_property_request_post(request: dict, listing_url: str = "", plotproof_contact: str = "") -> str:
+    """The Property Requests mirror of format_listing_post() - same
+    always-present PlotProof signature + stable sequential number
+    (utils/property_requests.next_request_number(), its own sequence -
+    see this module's docstring), but framed as a request instead of an
+    offer: ends with a call for anyone with matching land to contact
+    PlotProof, not a "contact the seller" line."""
+    verified = bool(request.get("verified_buyer"))
+
+    lines = ["🟢 PLOTPROOF PROPERTY REQUEST"]
+    if request.get("request_number"):
+        lines.append(f"📍 Request #{request['request_number']:03d}")
+    lines.append("")
+
+    if request.get("heading"):
+        lines.append(f"🏡 {request['heading']}")
+    if request.get("price_range"):
+        lines.append(f"💰 Budget: {request['price_range']}")
+    if request.get("location"):
+        lines.append(f"📌 Location wanted: {request['location']}")
+    if request.get("size"):
+        lines.append(f"📐 Size wanted: {request['size']}")
+    if request.get("requirements"):
+        lines.append(f"📝 {request['requirements']}")
+
+    lines.append("")
+    if verified:
+        lines.append("✅ Verified buyer - ready to proceed.")
+    lines.append("🤝 Have land matching this request? Contact PlotProof to arrange a physical meeting.")
+    lines.append(f"🔗 {listing_url}" if listing_url else "🔗 plotproof.streamlit.app")
+
+    if plotproof_contact:
+        lines.append("")
+        lines.append(f"📞 Contact PlotProof: {plotproof_contact}")
+
+    lines.append("")
+    lines.append("#PlotProofVerified #PropertyWanted #LandWanted")
+
+    return "\n".join(lines)
+
+
+def property_request_contact_link(request: dict, contact_number: str) -> Optional[str]:
+    """wa.me link to PlotProof's own number, pre-filled with a message
+    identifying which request the responder is offering land against -
+    the Property Requests equivalent of plotproof_contact_link(), with
+    wording for someone who HAS land, not someone looking to buy."""
+    digits = re.sub(r"[^\d]", "", contact_number or "")
+    if len(digits) < 8:
+        return None
+    digits = _to_international_ng(digits)
+    heading = request.get("heading") or "a property request"
+    message = (
+        f'Hi PlotProof, I have land that might match this request: "{heading}" '
+        f'(ref #{request["id"]}). Can we arrange a meeting?'
+    )
     return f"https://wa.me/{digits}?text={urllib.parse.quote(message)}"

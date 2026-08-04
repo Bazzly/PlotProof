@@ -15,6 +15,14 @@ ranked above unverified ones (utils/listings.list_published_ranked()).
 processing (see utils/listings.py's module docstring); a seller requests
 it, an admin follows up and marks it once paid.
 
+The third tab, Property Requests, is the inverse: a verified buyer's ask
+("looking for land in this price range/location"), posted only by an
+admin (utils/property_requests.py) - not a public submission form, since
+there's no external submitter to review here, PlotProof already vetted
+the buyer before posting on their behalf. Anyone with matching land
+contacts PlotProof (same intermediary model as Land Listings) to arrange
+a physical meeting.
+
 Broken out to its own page (not the sidebar/inline on the main flow) for
 the same reason as pages/about.py, pages/faq.py, pages/investment_analysis.py
 - reachable from the sidebar (utils/nav.py) on every page.
@@ -26,7 +34,7 @@ import traceback
 import streamlit as st
 from dotenv import load_dotenv
 
-from utils import app_config, coordinates, crs_utils, file_handler, gis_processing, icons, listing_format, listings, nav, rate_limit, risk_calculator, theme
+from utils import app_config, coordinates, crs_utils, file_handler, gis_processing, icons, listing_format, listings, nav, property_requests, rate_limit, risk_calculator, theme
 
 load_dotenv()
 
@@ -66,7 +74,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-tab_browse, tab_sell = st.tabs(["Browse Listings", "Sell Your Land"])
+tab_browse, tab_sell, tab_requests = st.tabs(["Browse Listings", "Sell Your Land", "Property Requests"])
 
 with tab_browse:
     published = listings.list_published_ranked()
@@ -265,3 +273,44 @@ with tab_sell:
                 if crs_note:
                     success_message += f" Coordinates converted from {crs_note}."
             st.success(success_message)
+
+with tab_requests:
+    st.caption(
+        "Verified buyers PlotProof is actively working with, looking for land in a specific "
+        "price range or location. Have property that matches? Contact PlotProof below to arrange "
+        "a physical meeting - these are posted by PlotProof directly, not open submissions."
+    )
+    active_requests = property_requests.list_active_ranked()
+    if not active_requests:
+        st.info("No active property requests right now - check back soon.")
+    else:
+        for request in active_requests:
+            ribbon = (
+                f'<div class="pp-verified-ribbon">{icons.icon("check-circle", size=12)}Verified Buyer</div>'
+                if request.get("verified_buyer") else ""
+            )
+            st.markdown(
+                f"""
+                <div class="pp-listing-card">
+                  {ribbon}
+                  <div class="pp-listing-heading">{request.get('heading') or 'Property wanted'}</div>
+                  <p class="pp-listing-meta"><strong>Budget:</strong> {request.get('price_range') or '—'}</p>
+                  <p class="pp-listing-meta"><strong>Location wanted:</strong> {request.get('location') or '—'}</p>
+                  <p class="pp-listing-meta"><strong>Size wanted:</strong> {request.get('size') or '—'}</p>
+                  {f'<p class="pp-listing-meta">{request["requirements"]}</p>' if request.get('requirements') else ''}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            request_contact_link = listing_format.property_request_contact_link(
+                request, app_config.get_plotproof_contact_number() or ""
+            )
+            with st.container(key=f"pp_request_contact_{request['id']}"):
+                if request_contact_link:
+                    st.markdown(
+                        f"""<div class="pp-cta-row"><a class="pp-cta pp-cta--solid" href="{request_contact_link}"
+                        target="_blank">{icons.icon("chat", color="#ffffff", size=16)} I have matching land</a></div>""",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.caption("Contact details unavailable right now - please check back soon.")

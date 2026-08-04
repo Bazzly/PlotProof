@@ -30,6 +30,11 @@ Admin portal:
      paid "PlotProof Verified" status (no in-app payment - see
      utils/listings.py's docstring for why), and get pre-filled share
      links (utils/listing_format.py) for a published listing.
+  7. Post Property Requests (see utils/property_requests.py) - the
+     inverse of a Land Listing: a verified buyer's ask, posted only from
+     here (no public submission form - PlotProof is vetting the buyer,
+     not reviewing an outside submission). Paste the buyer's brief, same
+     parse-then-edit flow as Land Listings, and it's live immediately.
 
 Gated behind ADMIN_PASSWORD (env var), and refuses to render at all if no
 password is configured, so it can never be accidentally exposed with no
@@ -57,6 +62,7 @@ from utils import (
     land_chat_training,
     listing_format,
     listings,
+    property_requests,
     registry,
     risk_calculator,
     theme,
@@ -89,8 +95,11 @@ if not st.session_state.get("_admin_authed"):
             st.error("Wrong password.")
     st.stop()
 
-tab_key, tab_review, tab_bulk, tab_chat, tab_invest, tab_listings = st.tabs(
-    ["API Key", "Extraction Review", "Bulk Add Plans", "Land Chat Training", "Investment Fallback Data", "Listings"]
+tab_key, tab_review, tab_bulk, tab_chat, tab_invest, tab_listings, tab_requests = st.tabs(
+    [
+        "API Key", "Extraction Review", "Bulk Add Plans", "Land Chat Training",
+        "Investment Fallback Data", "Listings", "Property Requests",
+    ]
 )
 
 # Files that get skipped from auto-add rather than flagged as an outright
@@ -644,3 +653,127 @@ with tab_listings:
         st.caption("Nothing here yet.")
     for other_listing in other_listings:
         _render_admin_listing(other_listing, LISTINGS_APP_URL)
+
+
+def _render_admin_request(request: dict, app_url: str) -> None:
+    badges = [request["status"]]
+    if request.get("request_number"):
+        badges.append(f"Request #{request['request_number']:03d}")
+    if request.get("verified_buyer"):
+        badges.append("VERIFIED BUYER")
+    label = f"{request.get('heading') or 'Property wanted'} - {' | '.join(badges)}"
+
+    with st.expander(label):
+        st.text_area(
+            "Raw text pasted by admin", value=request.get("raw_text", ""), height=80,
+            disabled=True, key=f"req_raw_{request['id']}",
+        )
+        col1, col2 = st.columns(2)
+        col1.markdown(f"**Budget:** {request.get('price_range') or '—'}")
+        col1.markdown(f"**Size wanted:** {request.get('size') or '—'}")
+        col2.markdown(f"**Location wanted:** {request.get('location') or '—'}")
+        if request.get("requirements"):
+            st.markdown(f"**Notes:** {request['requirements']}")
+        st.caption(f"Posted {request.get('posted_at', '?')}")
+
+        if request["status"] == property_requests.STATUS_ACTIVE:
+            if st.button("Mark as Closed", key=f"close_req_{request['id']}"):
+                property_requests.update_request(
+                    request["id"], status=property_requests.STATUS_CLOSED,
+                    closed_at=datetime.now(timezone.utc).isoformat(),
+                )
+                st.rerun()
+        else:
+            if st.button("Re-activate", key=f"reopen_req_{request['id']}"):
+                property_requests.update_request(request["id"], status=property_requests.STATUS_ACTIVE, closed_at=None)
+                st.rerun()
+        if st.button("Delete", key=f"delete_req_{request['id']}"):
+            property_requests.delete_request(request["id"])
+            st.rerun()
+
+        st.divider()
+        st.markdown("**Share this request**")
+        request_url = f"{app_url}/listings"
+        plotproof_contact = app_config.get_plotproof_contact_number() or ""
+        post_text = listing_format.format_property_request_post(request, request_url, plotproof_contact)
+        st.code(post_text, language=None)
+        share_links = listing_format.build_share_links(post_text, request_url)
+        st.markdown(
+            f"""
+            <div class="pp-cta-row">
+              <a class="pp-cta pp-cta--solid" href="{share_links['whatsapp']}" target="_blank">WhatsApp</a>
+              <a class="pp-cta pp-cta--outline" href="{share_links['twitter']}" target="_blank">X / Twitter</a>
+              <a class="pp-cta pp-cta--outline" href="{share_links['telegram']}" target="_blank">Telegram</a>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+with tab_requests:
+    st.caption(
+        "Post a verified buyer's request directly - there's no public submission form for these, "
+        "since PlotProof is vetting the buyer, not reviewing an outside submission. Paste the "
+        "buyer's brief, review the parsed fields, and post - it's live on the public Property "
+        "Requests tab immediately."
+    )
+
+    st.markdown("**Post a new request**")
+    request_raw = st.text_area(
+        "Paste the buyer's request",
+        height=120,
+        placeholder=(
+            "Serious Buyer Seeking Land Along Lekki-Epe Expressway\nBudget: 80M - 150M Naira\n"
+            "Location: Lekki-Epe Expressway corridor\nSize: 500-1000 Sqm\n"
+            "Buyer wants C of O title, ready to inspect this week."
+        ),
+        key="_req_raw_text",
+    )
+    if st.button("Parse fields", key="_req_parse_btn"):
+        parsed = listing_format.parse_property_request_text(request_raw)
+        for field, value in parsed.items():
+            st.session_state[f"_req_{field}"] = value
+        st.rerun()
+
+    st.markdown("**Fields (edit if parsing missed anything)**")
+    req_heading = st.text_input("Heading", key="_req_heading")
+    col_a, col_b = st.columns(2)
+    req_price_range = col_a.text_input("Budget / price range", key="_req_price_range")
+    req_size = col_b.text_input("Size wanted (optional)", key="_req_size")
+    req_location = st.text_input("Location wanted", key="_req_location")
+    req_requirements = st.text_area("Additional notes (optional)", key="_req_requirements", height=80)
+    req_verified_buyer = st.checkbox("Verified buyer (PlotProof has vetted this buyer)", value=True, key="_req_verified_buyer")
+
+    if st.button("Post request", type="primary", key="_req_post_btn"):
+        if not req_heading.strip() and not request_raw.strip():
+            st.error("Paste the buyer's request or fill in at least a heading.")
+        else:
+            new_request_id = property_requests.add_request(
+                raw_text=request_raw,
+                heading=req_heading.strip() or "Property wanted",
+                price_range=req_price_range.strip(),
+                location=req_location.strip(),
+                size=req_size.strip(),
+                requirements=req_requirements.strip(),
+                verified_buyer=req_verified_buyer,
+                request_number=property_requests.next_request_number(),
+            )
+            st.success("Request posted - now live on the public Property Requests tab.")
+
+    st.divider()
+    all_requests = property_requests.list_requests()
+    active_reqs = [r for r in all_requests if r["status"] == property_requests.STATUS_ACTIVE]
+    closed_reqs = [r for r in all_requests if r["status"] != property_requests.STATUS_ACTIVE]
+
+    st.markdown(f"**Active requests ({len(active_reqs)})**")
+    if not active_reqs:
+        st.info("No active requests.")
+    for active_req in active_reqs:
+        _render_admin_request(active_req, LISTINGS_APP_URL)
+
+    st.divider()
+    st.markdown(f"**Closed requests ({len(closed_reqs)})**")
+    if not closed_reqs:
+        st.caption("Nothing here yet.")
+    for closed_req in closed_reqs:
+        _render_admin_request(closed_req, LISTINGS_APP_URL)
