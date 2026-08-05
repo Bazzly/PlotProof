@@ -100,6 +100,69 @@ def save_uploaded_file(uploaded_file) -> str:
     return str(dest)
 
 
+LISTING_PHOTOS_DIR = Path(__file__).resolve().parent.parent / "data" / "listing_photos"
+LISTING_PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
+
+# A listing card only ever needs web-display resolution, but sellers
+# routinely upload multi-MB phone photos straight from the camera -
+# every photo is re-encoded to this cap regardless of its original size/
+# format, which is where the real storage savings come from (a typical
+# 4-8MB phone photo becomes a few hundred KB).
+_LISTING_PHOTO_MAX_DIMENSION = 1600
+_LISTING_PHOTO_JPEG_QUALITY = 78
+
+
+def save_listing_photo(uploaded_file) -> str:
+    """Compresses and persists a Land Listing photo (pages/listings.py's
+    "Sell Your Land" tab) - always re-encoded as a resized JPEG, same
+    local-disk-unless-Supabase-configured fallback as save_uploaded_file(),
+    but its own bucket/directory (listing-photos, not survey-uploads)
+    since these are meant to be public-facing images, unlike a seller's
+    private survey document."""
+    image = Image.open(uploaded_file)
+    image = ImageOps.exif_transpose(image)  # bake in phone-stored rotation before resizing
+    if image.mode not in ("RGB", "L"):
+        image = image.convert("RGB")
+    if max(image.size) > _LISTING_PHOTO_MAX_DIMENSION:
+        scale = _LISTING_PHOTO_MAX_DIMENSION / max(image.size)
+        image = image.resize((round(image.width * scale), round(image.height * scale)), Image.LANCZOS)
+
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=_LISTING_PHOTO_JPEG_QUALITY, optimize=True)
+    file_bytes = buffer.getvalue()
+    filename = f"{uuid.uuid4().hex}.jpg"
+
+    if storage_backend() == "supabase":
+        from supabase import create_client
+
+        client = create_client(_SUPABASE_URL, _SUPABASE_KEY)
+        client.storage.from_("listing-photos").upload(filename, file_bytes, {"content-type": "image/jpeg"})
+        return f"supabase://listing-photos/{filename}"
+
+    LISTING_PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
+    dest = LISTING_PHOTOS_DIR / filename
+    dest.write_bytes(file_bytes)
+    return str(dest)
+
+
+def resolve_photo_url(photo_ref: str) -> Optional[str]:
+    """A local path already works directly with st.image(); a
+    "supabase://bucket/filename" reference (see save_listing_photo())
+    needs resolving to a real public URL first - the listing-photos
+    bucket is expected to be public (these are meant to be shown to
+    every visitor), unlike survey-uploads."""
+    if photo_ref.startswith("supabase://"):
+        _, _, rest = photo_ref.partition("supabase://")
+        bucket, _, filename = rest.partition("/")
+        if storage_backend() != "supabase":
+            return None
+        from supabase import create_client
+
+        client = create_client(_SUPABASE_URL, _SUPABASE_KEY)
+        return client.storage.from_(bucket).get_public_url(filename)
+    return photo_ref if os.path.isfile(photo_ref) else None
+
+
 _OCR_TARGET_SIZE_PX = 2400  # long-side target; phone photos are often smaller
 # or over-compressed relative to what Tesseract wants (~300 DPI equivalent).
 

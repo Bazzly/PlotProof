@@ -539,23 +539,46 @@ def get_css() -> str:
 }}
 .pp-listing-meta {{ color: var(--pp-ink-secondary); font-size: 0.92rem; margin: 2px 0; }}
 .pp-listing-meta strong {{ color: var(--pp-ink-primary); }}
-.pp-verified-ribbon {{
+/* Holds one or more status ribbons (verified/sold/closed) top-right, side
+   by side - a flex container rather than each ribbon positioning itself,
+   so multiple badges (e.g. a sold listing that was also verified) stack
+   cleanly instead of overlapping. */
+.pp-listing-ribbons {{
   position: absolute;
   top: var(--pp-space-4);
   right: var(--pp-space-4);
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 60%;
+}}
+.pp-verified-ribbon, .pp-sold-ribbon {{
   display: inline-flex;
   align-items: center;
   gap: 4px;
   padding: 3px 10px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--pp-good) 14%, var(--pp-surface));
-  border: 1px solid var(--pp-good);
-  color: var(--pp-good);
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.3px;
   text-transform: uppercase;
+  white-space: nowrap;
 }}
+.pp-verified-ribbon {{
+  background: color-mix(in srgb, var(--pp-good) 14%, var(--pp-surface));
+  border: 1px solid var(--pp-good);
+  color: var(--pp-good);
+}}
+/* Neutral, not a warning color - a sold listing/closed request isn't a
+   problem, just no longer actionable (see utils/listings.py's
+   list_published_ranked() docstring for why it stays visible at all). */
+.pp-sold-ribbon {{
+  background: var(--pp-ink-primary);
+  border: 1px solid var(--pp-ink-primary);
+  color: #ffffff;
+}}
+.pp-listing-card--sold {{ opacity: 0.72; }}
 
 /* ---- footer ---- */
 .pp-footer {{

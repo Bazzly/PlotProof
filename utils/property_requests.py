@@ -96,11 +96,22 @@ def list_requests(status: Optional[str] = None) -> List[dict]:
     return sorted(records, key=lambda r: r.get("posted_at", ""), reverse=True)
 
 
-def list_active_ranked() -> List[dict]:
-    """Verified-buyer requests first, then newest - the public Property
-    Requests tab ranking."""
-    active = list_requests(status=STATUS_ACTIVE)
-    return sorted(active, key=lambda r: (0 if r.get("verified_buyer") else 1, r.get("posted_at", "")))
+def list_public_ranked() -> List[dict]:
+    """Active, verified-buyer requests first, then newest - the public
+    Property Requests tab ranking. Closed requests (pages/admin_review.py's
+    "Mark as Closed") stay visible here too (tagged CLOSED by the caller -
+    see pages/listings.py), just sorted to the bottom, rather than
+    disappearing - same reasoning as utils/listings.list_published_ranked()
+    keeping sold listings visible."""
+    all_requests = list_requests()
+    return sorted(
+        all_requests,
+        key=lambda r: (
+            1 if r["status"] == STATUS_CLOSED else 0,
+            0 if r.get("verified_buyer") else 1,
+            r.get("posted_at", ""),
+        ),
+    )
 
 
 def next_request_number() -> int:

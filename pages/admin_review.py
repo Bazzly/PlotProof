@@ -490,6 +490,16 @@ def _render_admin_listing(listing: dict, app_url: str) -> None:
         seller_wa_link = listing_format.seller_whatsapp_link(listing.get("seller_contact", ""), listing.get("heading", ""))
         if seller_wa_link:
             st.markdown(f"[Message seller on WhatsApp]({seller_wa_link})")
+        if listing.get("video_url"):
+            st.markdown(f"🎥 [Video]({listing['video_url']})")
+        photo_paths = listing.get("photo_paths") or []
+        if photo_paths:
+            st.markdown(f"**Photos ({len(photo_paths)}):**")
+            photo_cols = st.columns(min(len(photo_paths), 4))
+            for i, photo_path in enumerate(photo_paths):
+                photo_url = file_handler.resolve_photo_url(photo_path)
+                if photo_url:
+                    photo_cols[i % len(photo_cols)].image(photo_url, use_container_width=True)
         st.caption(f"Submitted {listing.get('submitted_at', '?')}")
 
         if listing.get("risk_result"):

@@ -39,6 +39,8 @@ first - schema below).
         coordinates_text text,
         coordinate_epsg text,
         points jsonb,
+        photo_paths jsonb,
+        video_url text,
         risk_level text,
         risk_result jsonb,
         admin_risk_override text,
@@ -130,16 +132,18 @@ def next_alert_number() -> int:
 
 
 def list_published_ranked() -> List[dict]:
-    """Verified listings first, then by risk (Low > Medium > High >
-    unrated), then newest - the public Browse Listings ranking. Excludes
-    listings an admin has marked sold (utils/admin_review.py's "Mark as
-    Sold") - those stay on record (visible in the admin portal, not
-    deleted) but drop off the public page since they're no longer
-    actually available."""
-    published = [l for l in list_listings(status=STATUS_PUBLISHED) if not l.get("sold")]
+    """Unsold, verified listings first, then by risk (Low > Medium > High
+    > unrated), then newest - the public Browse Listings ranking.
+    Listings an admin has marked sold (pages/admin_review.py's "Mark as
+    Sold") stay visible here too (tagged SOLD by the caller - see
+    pages/listings.py), just sorted to the bottom regardless of their
+    other rankings, since they're no longer actionable but are still
+    real, useful signal (recent activity, a sense of what sells)."""
+    published = list_listings(status=STATUS_PUBLISHED)
 
     def sort_key(listing: dict):
         return (
+            1 if listing.get("sold") else 0,
             0 if listing.get("verified") else 1,
             -_RISK_RANK.get(effective_risk_level(listing), 0),
             listing.get("submitted_at", ""),
@@ -175,6 +179,8 @@ def add_listing(**fields) -> str:
         "coordinates_text": None,
         "coordinate_epsg": None,
         "points": None,
+        "photo_paths": [],
+        "video_url": None,
         "risk_level": None,
         "risk_result": None,
         "admin_risk_override": None,

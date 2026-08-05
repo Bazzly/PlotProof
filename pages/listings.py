@@ -44,6 +44,7 @@ nav.render_sidebar()
 nav.render_floating_chat()
 
 DAILY_LISTING_LIMIT = int(os.environ.get("DAILY_LISTING_LIMIT", "3"))
+MAX_LISTING_PHOTOS = 6
 BURST_MAX_REQUESTS = int(os.environ.get("BURST_MAX_REQUESTS", "10"))
 BURST_WINDOW_SECONDS = int(os.environ.get("BURST_WINDOW_SECONDS", "60"))
 CLIENT_ID = rate_limit.get_client_id()
@@ -83,10 +84,12 @@ with tab_browse:
     else:
         for listing in published:
             risk_level = listings.effective_risk_level(listing)
-            ribbon = (
-                f'<div class="pp-verified-ribbon">{icons.icon("check-circle", size=12)}Verified</div>'
-                if listing.get("verified") else ""
-            )
+            sold = bool(listing.get("sold"))
+            ribbons = ""
+            if listing.get("verified"):
+                ribbons += f'<div class="pp-verified-ribbon">{icons.icon("check-circle", size=12)}Verified</div>'
+            if sold:
+                ribbons += '<div class="pp-sold-ribbon">Sold</div>'
             risk_html = ""
             if risk_level:
                 status = theme.RISK_TO_STATUS.get(risk_level, "warning")
@@ -95,10 +98,11 @@ with tab_browse:
                     f'<div class="pp-badge-risk" style="--pp-status: var(--pp-{status}); '
                     f'margin-top: var(--pp-space-3);">{icons.icon(risk_icon, size=16)} {risk_level} Risk</div>'
                 )
+            card_class = "pp-listing-card pp-listing-card--sold" if sold else "pp-listing-card"
             st.markdown(
                 f"""
-                <div class="pp-listing-card">
-                  {ribbon}
+                <div class="{card_class}">
+                  <div class="pp-listing-ribbons">{ribbons}</div>
                   <div class="pp-listing-heading">{listing.get('heading') or 'Land for sale'}</div>
                   <p class="pp-listing-meta"><strong>Size:</strong> {listing.get('size') or '—'}</p>
                   <p class="pp-listing-meta"><strong>Price:</strong> {listing.get('price') or '—'}</p>
@@ -109,12 +113,26 @@ with tab_browse:
                 """,
                 unsafe_allow_html=True,
             )
+
+            photo_paths = listing.get("photo_paths") or []
+            if photo_paths:
+                photo_cols = st.columns(min(len(photo_paths), 4))
+                for i, photo_path in enumerate(photo_paths[:4]):
+                    photo_url = file_handler.resolve_photo_url(photo_path)
+                    if photo_url:
+                        photo_cols[i % len(photo_cols)].image(photo_url, use_container_width=True)
+
+            if listing.get("video_url"):
+                st.markdown(f"🎥 [Watch video]({listing['video_url']})")
+
             # PlotProof's own number, not the seller's - PlotProof stays
             # the point of contact on both sides (see
             # utils/app_config.get_plotproof_contact_number()'s docstring).
             contact_link = listing_format.plotproof_contact_link(listing, app_config.get_plotproof_contact_number() or "")
             with st.container(key=f"pp_listing_contact_{listing['id']}"):
-                if contact_link:
+                if sold:
+                    st.caption("This listing has been marked sold.")
+                elif contact_link:
                     st.markdown(
                         f"""<div class="pp-cta-row"><a class="pp-cta pp-cta--solid" href="{contact_link}"
                         target="_blank">{icons.icon("chat", color="#ffffff", size=16)} Enquire about this listing</a></div>""",
@@ -122,6 +140,7 @@ with tab_browse:
                     )
                 else:
                     st.caption("Contact details unavailable right now - please check back soon.")
+            st.divider()
 
 with tab_sell:
     st.caption(
@@ -195,6 +214,22 @@ with tab_sell:
     )
 
     st.divider()
+    st.markdown(f"**Photos & video (optional, up to {MAX_LISTING_PHOTOS} photos)**")
+    st.caption("Photos are automatically resized and compressed - no need to shrink them yourself first.")
+    uploaded_photos = st.file_uploader(
+        "Photos of the land",
+        type=["png", "jpg", "jpeg"],
+        accept_multiple_files=True,
+        key="_listing_photos",
+    )
+    if uploaded_photos and len(uploaded_photos) > MAX_LISTING_PHOTOS:
+        st.warning(f"Only the first {MAX_LISTING_PHOTOS} photos will be used.")
+    video_url = st.text_input(
+        "Video link", key="_listing_video_url",
+        placeholder="YouTube, Instagram, TikTok, etc.",
+    )
+
+    st.divider()
     verification_requested = st.checkbox(
         "Request PlotProof Verification (paid)",
         key="_listing_verification_requested",
@@ -248,6 +283,14 @@ with tab_sell:
                     "without a risk check; an admin can add one later."
                 )
 
+            photo_paths = []
+            for photo in (uploaded_photos or [])[:MAX_LISTING_PHOTOS]:
+                try:
+                    photo_paths.append(file_handler.save_listing_photo(photo))
+                except Exception:
+                    traceback.print_exc()
+                    st.warning(f"Couldn't process one of the photos ({photo.name}) - skipped it.")
+
             listing_id = listings.add_listing(
                 raw_text=raw_text,
                 heading=heading.strip() or "Land for sale",
@@ -260,6 +303,8 @@ with tab_sell:
                 coordinates_text=text_for_parsing or None,
                 coordinate_epsg=forced_epsg,
                 points=points,
+                photo_paths=photo_paths,
+                video_url=video_url.strip() or None,
                 risk_level=risk_level,
                 risk_result=risk_result,
                 verification_requested=verification_requested,
@@ -280,19 +325,22 @@ with tab_requests:
         "price range or location. Have property that matches? Contact PlotProof below to arrange "
         "a physical meeting - these are posted by PlotProof directly, not open submissions."
     )
-    active_requests = property_requests.list_active_ranked()
-    if not active_requests:
-        st.info("No active property requests right now - check back soon.")
+    public_requests = property_requests.list_public_ranked()
+    if not public_requests:
+        st.info("No property requests right now - check back soon.")
     else:
-        for request in active_requests:
-            ribbon = (
-                f'<div class="pp-verified-ribbon">{icons.icon("check-circle", size=12)}Verified Buyer</div>'
-                if request.get("verified_buyer") else ""
-            )
+        for request in public_requests:
+            closed = request["status"] == property_requests.STATUS_CLOSED
+            ribbons = ""
+            if request.get("verified_buyer"):
+                ribbons += f'<div class="pp-verified-ribbon">{icons.icon("check-circle", size=12)}Verified Buyer</div>'
+            if closed:
+                ribbons += '<div class="pp-sold-ribbon">Closed</div>'
+            card_class = "pp-listing-card pp-listing-card--sold" if closed else "pp-listing-card"
             st.markdown(
                 f"""
-                <div class="pp-listing-card">
-                  {ribbon}
+                <div class="{card_class}">
+                  <div class="pp-listing-ribbons">{ribbons}</div>
                   <div class="pp-listing-heading">{request.get('heading') or 'Property wanted'}</div>
                   <p class="pp-listing-meta"><strong>Budget:</strong> {request.get('price_range') or '—'}</p>
                   <p class="pp-listing-meta"><strong>Location wanted:</strong> {request.get('location') or '—'}</p>
@@ -306,7 +354,9 @@ with tab_requests:
                 request, app_config.get_plotproof_contact_number() or ""
             )
             with st.container(key=f"pp_request_contact_{request['id']}"):
-                if request_contact_link:
+                if closed:
+                    st.caption("This request has been closed.")
+                elif request_contact_link:
                     st.markdown(
                         f"""<div class="pp-cta-row"><a class="pp-cta pp-cta--solid" href="{request_contact_link}"
                         target="_blank">{icons.icon("chat", color="#ffffff", size=16)} I have matching land</a></div>""",
@@ -314,3 +364,4 @@ with tab_requests:
                     )
                 else:
                     st.caption("Contact details unavailable right now - please check back soon.")
+            st.divider()
