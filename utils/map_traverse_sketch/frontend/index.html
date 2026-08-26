@@ -191,6 +191,16 @@
         const { bearing, distance } = bearingDistance(points[i - 1], points[i]);
         legs.push({ bearing: bearing, distance_m: distance });
       }
+      // Plus the closing leg (last point back to the first) - the clicked
+      // points describe a closed plot boundary, so this is a real edge,
+      // not something to omit. Without it, the Python side's
+      // compute_traverse()/build_open_polygon() would treat the final
+      // clicked corner as an inaccurate "closing" vertex and drop it,
+      // silently losing a real point.
+      if (points.length > 2) {
+        const { bearing, distance } = bearingDistance(points[points.length - 1], points[0]);
+        legs.push({ bearing: bearing, distance_m: distance });
+      }
       window.parent.postMessage({
         isStreamlitMessage: true,
         type: "streamlit:setComponentValue",

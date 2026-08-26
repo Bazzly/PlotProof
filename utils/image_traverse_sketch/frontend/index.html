@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; padding: 0; font-family: 'Work Sans', -apple-system, BlinkMacSystemFont, sans-serif; background: #f9f5ec; }
+  #wrap { padding: 8px; box-sizing: border-box; }
+  #imgwrap {
+    position: relative; width: 100%; border-radius: 12px; border: 1px solid #d4cdbf;
+    overflow: hidden; cursor: crosshair; background: #fff; line-height: 0;
+  }
+  #img { width: 100%; height: auto; display: block; user-select: none; -webkit-user-drag: none; }
+  #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+  #bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
+  #readout { font-size: 13px; color: #3b3129; flex: 1 1 auto; min-width: 200px; }
+  #readout strong { color: #104f29; }
+  .pp-btn {
+    background: #104f29; color: #fff; border: none; border-radius: 999px;
+    padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .pp-btn:hover { background: #0d3f21; }
+  .pp-btn:disabled { background: #cfc8ba; cursor: not-allowed; }
+  .pp-btn--outline { background: transparent; color: #104f29; border: 1px solid #104f29; }
+  .pp-btn--outline:hover { background: #ecf3ee; }
+  #btnrow { display: flex; gap: 8px; flex-wrap: wrap; }
+  #hint { font-size: 12px; color: #845a0f; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="imgwrap">
+    <img id="img" draggable="false" />
+    <svg id="overlay"></svg>
+  </div>
+  <div id="bar">
+    <span id="readout">Click your plot's first corner on the image.</span>
+    <div id="btnrow">
+      <button id="undoBtn" class="pp-btn pp-btn--outline" type="button" disabled>Undo last point</button>
+      <button id="clearBtn" class="pp-btn pp-btn--outline" type="button" disabled>Start over</button>
+      <button id="finishBtn" class="pp-btn" type="button" disabled>Finish (need 3+ points)</button>
+    </div>
+  </div>
+  <div id="hint">Click each corner in order, clockwise, starting with the first (origin) corner. This only needs to capture the rough shape - you'll fine-tune it against a real satellite map next.</div>
+</div>
+<script>
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  let points = [];   // [{x, y}, ...] fractions (0-1) of the rendered image box
+  let currentArgs = null;
+  let imgLoaded = false;
+
+  const imgWrap = document.getElementById("imgwrap");
+  const img = document.getElementById("img");
+  const overlay = document.getElementById("overlay");
+
+  function pointLabel(i) { return "PL" + (i + 1); }
+
+  function setReadout(html) {
+    document.getElementById("readout").innerHTML = html;
+  }
+
+  function updateButtons() {
+    document.getElementById("undoBtn").disabled = points.length === 0;
+    document.getElementById("clearBtn").disabled = points.length === 0;
+    const finishBtn = document.getElementById("finishBtn");
+    finishBtn.disabled = points.length < 3;
+    finishBtn.textContent = points.length < 3 ? "Finish (need 3+ points)" : "Finish (" + points.length + " points)";
+  }
+
+  function toPixel(pt) {
+    const rect = imgWrap.getBoundingClientRect();
+    return { x: pt.x * rect.width, y: pt.y * rect.height };
+  }
+
+  function redraw() {
+    overlay.innerHTML = "";
+    const pixelPoints = points.map(toPixel);
+
+    for (let i = 1; i < pixelPoints.length; i++) {
+      const line = document.createElementNS(SVG_NS, "line");
+      line.setAttribute("x1", pixelPoints[i - 1].x);
+      line.setAttribute("y1", pixelPoints[i - 1].y);
+      line.setAttribute("x2", pixelPoints[i].x);
+      line.setAttribute("y2", pixelPoints[i].y);
+      line.setAttribute("stroke", "#104f29");
+      line.setAttribute("stroke-width", "3");
+      overlay.appendChild(line);
+    }
+
+    pixelPoints.forEach((p, i) => {
+      const circle = document.createElementNS(SVG_NS, "circle");
+      circle.setAttribute("cx", p.x);
+      circle.setAttribute("cy", p.y);
+      circle.setAttribute("r", 6);
+      circle.setAttribute("fill", "#0ca30c");
+      circle.setAttribute("stroke", "#fff");
+      circle.setAttribute("stroke-width", "2");
+      overlay.appendChild(circle);
+
+      const text = document.createElementNS(SVG_NS, "text");
+      text.setAttribute("x", p.x + 9);
+      text.setAttribute("y", p.y - 9);
+      text.setAttribute("font-size", "13");
+      text.setAttribute("font-weight", "700");
+      text.setAttribute("fill", "#104f29");
+      text.setAttribute("stroke", "#fff");
+      text.setAttribute("stroke-width", "3");
+      text.setAttribute("paint-order", "stroke");
+      text.textContent = pointLabel(i);
+      overlay.appendChild(text);
+    });
+  }
+
+  function setFrameHeight() {
+    const height = document.documentElement.scrollHeight;
+    window.parent.postMessage({ isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: height }, "*");
+  }
+
+  function sizeOverlay() {
+    const rect = imgWrap.getBoundingClientRect();
+    overlay.setAttribute("width", rect.width);
+    overlay.setAttribute("height", rect.height);
+    overlay.setAttribute("viewBox", "0 0 " + rect.width + " " + rect.height);
+    redraw();
+    setTimeout(setFrameHeight, 50);
+  }
+
+  imgWrap.addEventListener("click", (e) => {
+    if (!imgLoaded) return;
+    const rect = imgWrap.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+    if (x < 0 || x > 1 || y < 0 || y > 1) return;
+    points.push({ x, y });
+    redraw();
+    setReadout(
+      points.length === 1
+        ? "First point set (" + pointLabel(0) + "). Click the next corner, going clockwise."
+        : pointLabel(points.length - 1) + " set. Click the next corner."
+    );
+    updateButtons();
+  });
+
+  document.getElementById("undoBtn").addEventListener("click", () => {
+    points.pop();
+    redraw();
+    setReadout(
+      points.length === 0
+        ? "Click your plot's first corner on the image."
+        : pointLabel(points.length - 1) + " set. Click the next corner."
+    );
+    updateButtons();
+  });
+
+  document.getElementById("clearBtn").addEventListener("click", () => {
+    points = [];
+    redraw();
+    setReadout("Click your plot's first corner on the image.");
+    updateButtons();
+  });
+
+  document.getElementById("finishBtn").addEventListener("click", () => {
+    if (points.length < 3) return;
+    window.parent.postMessage({
+      isStreamlitMessage: true,
+      type: "streamlit:setComponentValue",
+      value: { points: points },
+      dataType: "json",
+    }, "*");
+  });
+
+  window.addEventListener("resize", sizeOverlay);
+
+  window.addEventListener("message", (event) => {
+    if (!event.data || event.data.type !== "streamlit:render") return;
+    const args = event.data.args;
+    currentArgs = args;
+
+    if (!imgLoaded) {
+      img.addEventListener("load", () => {
+        imgLoaded = true;
+        sizeOverlay();
+        updateButtons();
+      });
+      img.src = args.image_data_uri;
+    }
+    setFrameHeight();
+  });
+
+  window.parent.postMessage({ isStreamlitMessage: true, type: "streamlit:componentReady", apiVersion: 1 }, "*");
+</script>
+</body>
+</html>

@@ -1,14 +1,23 @@
 """
 Custom Streamlit component: drag-to-position georeferencing for a
-survey-accurate boundary shape (utils/traverse.py's compute_traverse()
-output) onto a real map, for when no real-world coordinate is known at
-all - extraction found nothing on the uploaded document, and the user has
-no GPS reading for the plot either. The shape itself - size, angles, edge
-lengths - is already correct, since it comes from the same bearing/
-distance survey math the rest of this app trusts; the only unknown is
-*where* in the real world it sits, which is a pure translation problem:
-drag one marker (the origin/PL1 corner) on real satellite/street imagery,
-the whole shape moves rigidly with it, confirm once it lines up.
+boundary shape onto a real map, for when no real-world coordinate is
+known at all - extraction found nothing on the uploaded document, and the
+user has no GPS reading for the plot either. Two kinds of drag:
+
+  - The origin (blue) marker moves the WHOLE shape rigidly - for placing
+    it in roughly the right spot to start with.
+  - Every other (green) vertex marker moves independently - for
+    fine-tuning one corner at a time against real satellite/street
+    imagery, since the input shape isn't always trustworthy to the
+    centimeter (see pages/diagonal_calculator.py's callers: one passes a
+    survey-accurate shape from real bearings/distances, the other a rough
+    shape traced by clicking an unscaled document image - the latter
+    specifically NEEDS per-corner correction, not just repositioning).
+
+Confirming returns every vertex's final position, not just the origin -
+the shape itself may have changed from per-corner drags, so the caller
+recomputes bearings/distances from these positions directly rather than
+reusing whatever it started with.
 
 A static component (frontend/index.html) - no React/webpack build step,
 since this is one self-contained widget, not a design system. It talks to
@@ -48,8 +57,8 @@ def shape_georeferencer(
       draggable origin marker - a rough guess (e.g. a searched place, or
       Nigeria's centroid) to pan/zoom from, not a precise value.
     Returns None until the user clicks "Confirm this position" in the
-    widget, then {"lat": float, "lon": float} - the dragged marker's final
-    position, to use as the boundary's real origin_latlon.
+    widget, then {"vertices": [{"lat": float, "lon": float}, ...]} - every
+    vertex's final position, same order as vertices_en/labels.
     """
     return _component_func(
         vertices_en=[list(v) for v in vertices_en],

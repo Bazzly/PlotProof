@@ -245,3 +245,24 @@ def extract_text_from_file(file_path: str) -> Tuple[str, str]:
     if ext in (".png", ".jpg", ".jpeg"):
         return extract_text_from_image(file_path)
     return "", ""
+
+
+def render_pdf_first_page_png(file_path: str) -> Optional[bytes]:
+    """Rasterizes just the first page as PNG bytes - for on-screen preview
+    (e.g. the diagonal calculator's click-to-trace fallback, pages/
+    diagonal_calculator.py) when a PDF's automatic extraction found
+    nothing, so there's still something to look at and trace corners
+    against. 150dpi (vs. extract_text_from_pdf()'s 300dpi for OCR
+    accuracy) - plenty sharp for display, keeps the rendered image small.
+    Returns None if the file can't be opened as a PDF at all."""
+    try:
+        doc = fitz.open(file_path)
+    except Exception:
+        return None
+    try:
+        if doc.page_count == 0:
+            return None
+        pix = doc[0].get_pixmap(dpi=150)
+        return pix.tobytes("png")
+    finally:
+        doc.close()

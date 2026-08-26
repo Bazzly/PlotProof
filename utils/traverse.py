@@ -412,6 +412,40 @@ def resolve_recomputed_points(
     return points, closed, diagonal
 
 
+def legs_from_vertices(vertices_en: List[Tuple[float, float]], close: bool = False) -> List[Tuple[float, float]]:
+    """The inverse of walk_traverse(): given absolute (easting, northing)
+    vertices (not a bearing/distance walk), derive the bearing/distance leg
+    between each consecutive pair (vertex i -> vertex i+1). Same
+    whole-circle-bearing formula as compute_diagonal().
+
+    close=False (default) gives len(vertices_en)-1 legs, one per drawn
+    segment - matches map_traverse_sketch.py's own click-by-click legs,
+    an open polyline where there's no edge back to the start yet.
+    close=True adds one more: the final vertex back to the first - matches
+    the bearing/distance table's own convention elsewhere on this page,
+    one row per edge of a *closed* polygon (len(vertices_en) legs for
+    len(vertices_en) vertices).
+
+    Used when a boundary's vertices are known directly rather than via a
+    sequential survey walk - e.g. after dragging individual corners into
+    place on a map (pages/diagonal_calculator.py's georeference picker), or
+    converting a rough shape traced by clicking points on an uploaded
+    document's image. Either way the *positions* are the source of truth
+    there, not a bearing/distance reading, so this recovers the
+    conventional leg table from them instead of the other way around."""
+
+    def _leg(a: Tuple[float, float], b: Tuple[float, float]) -> Tuple[float, float]:
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        distance = math.hypot(dx, dy)
+        bearing = math.degrees(math.atan2(dx, dy)) % 360
+        return bearing, distance
+
+    legs = [_leg(vertices_en[i - 1], vertices_en[i]) for i in range(1, len(vertices_en))]
+    if close and len(vertices_en) > 2:
+        legs.append(_leg(vertices_en[-1], vertices_en[0]))
+    return legs
+
+
 def latlon_to_local_en(
     origin_en: Tuple[float, float],
     origin_latlon: Tuple[float, float],
@@ -431,3 +465,28 @@ def latlon_to_local_en(
     northing = origin_northing + (lat - lat0) * _METERS_PER_DEG_LAT
     easting = origin_easting + (lon - lon0) * meters_per_deg_lon
     return easting, northing
+
+
+def local_en_to_latlon(
+    origin_en: Tuple[float, float],
+    origin_latlon: Tuple[float, float],
+    easting: float,
+    northing: float,
+) -> Tuple[float, float]:
+    """The exact inverse of latlon_to_local_en() - a local (easting,
+    northing) point's real-world (lat, lon), given the origin's own
+    (easting, northing) and (lat, lon). Same flat-earth approximation as
+    the rest of this module (see resolve_recomputed_points()'s docstring).
+
+    Used to convert a boundary back to WGS84 when its vertices came from
+    somewhere other than a fresh walk_traverse() of the *current* legs -
+    e.g. after per-vertex adjustment on the georeference-picker map
+    (pages/diagonal_calculator.py), where resolve_recomputed_points()
+    would silently re-walk the ORIGINAL (pre-adjustment) legs instead of
+    honoring the dragged positions."""
+    origin_easting, origin_northing = origin_en
+    lat0, lon0 = origin_latlon
+    meters_per_deg_lon = _METERS_PER_DEG_LAT * math.cos(math.radians(lat0))
+    d_lat = (northing - origin_northing) / _METERS_PER_DEG_LAT
+    d_lon = (easting - origin_easting) / meters_per_deg_lon
+    return lat0 + d_lat, lon0 + d_lon

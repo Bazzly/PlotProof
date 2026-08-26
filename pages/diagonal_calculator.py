@@ -20,12 +20,18 @@ boundary is also drawn on a real map (see _render_click_map()) - clicking
 anywhere on it reads off that point's coordinate directly, without needing
 to work out its bearing/distance from the origin by hand first.
 
-When an uploaded file's automatic extraction finds nothing at all, or no
-GPS origin was typed in manually, there's still a way to get a real-world
-position without knowing any coordinates: _render_georeference_picker()
-lets the user search their general area and then drag the (already
-survey-accurate) boundary shape onto the real map until it sits on their
-actual plot - see utils/shape_georeferencer.py for how that drag works.
+When an uploaded file's automatic extraction finds nothing at all, three
+fallbacks build the same bearing/distance table another way: trace the
+boundary's rough shape by clicking corners on the document's own image/
+PDF preview (_render_image_trace_picker(), utils/image_traverse_sketch.py -
+shape only, no real scale), sketch it by clicking corners directly on a
+real map (_render_map_sketch_picker(), utils/map_traverse_sketch.py - gets
+real-world position too, live bearing/distance as you go), or type it in
+by hand off the same preview. Whichever produces a shape with no real-world
+origin yet, _render_georeference_picker() (utils/shape_georeferencer.py)
+lets the user search their area and drag it onto the real map - the whole
+shape via one origin marker, or any single corner independently, since a
+traced shape in particular is only ever a rough starting guess.
 
 Deliberately excludes everything the main flow does that isn't about the
 diagonal itself: no shared-registry overlap check, no risk score, no PDF
@@ -45,6 +51,7 @@ from folium.plugins import Fullscreen
 from streamlit_folium import st_folium
 
 from utils import coordinates, crs_utils, file_handler, nav, osm_service, rate_limit, theme, traverse, vision_extract
+from utils.image_traverse_sketch import image_traverse_sketch
 from utils.map_traverse_sketch import map_traverse_sketch
 from utils.shape_georeferencer import shape_georeferencer
 
@@ -112,6 +119,23 @@ st.markdown(
 )
 
 
+def _get_preview_bytes(saved_path: str, file_type: str) -> tuple:
+    """A displayable reference image for the upload-failure fallbacks
+    below (both st.image() and the image-trace component need raw bytes,
+    not just a file path that might be a PDF) - the image file itself for
+    a photo/scan, or the first page rasterized (utils/file_handler.py's
+    render_pdf_first_page_png()) for a PDF. Returns (bytes, mime_type),
+    (None, None) if there's nothing to show (an unreadable PDF)."""
+    if file_type in ("png", "jpg", "jpeg") and os.path.isfile(saved_path):
+        with open(saved_path, "rb") as f:
+            return f.read(), f"image/{'jpeg' if file_type == 'jpg' else file_type}"
+    if file_type == "pdf":
+        png_bytes = file_handler.render_pdf_first_page_png(saved_path)
+        if png_bytes:
+            return png_bytes, "image/png"
+    return None, None
+
+
 def _parse_legs(rows: list) -> tuple:
     """Same all-or-nothing parsing app_home.py's legs editor uses - a
     traverse walk is sequential, so one unparseable row invalidates every
@@ -158,8 +182,30 @@ def _render_legs_editor_and_result(rows: list, editor_key: str, origin_en: tuple
         st.warning("Couldn't build a shape from these legs - check your bearing/distance values.")
         return
 
+    # A diagonal needs 4+ vertices (see compute_diagonal()'s docstring) -
+    # gates the georeference picker below too, since there'd be nothing to
+    # place a triangle's non-existent diagonal onto anyway. Vertex COUNT is
+    # unaffected by anything the picker does (it repositions/redraws points,
+    # never adds or removes one), so this check doesn't need repeating
+    # after it runs.
+    if len(polygon_en) < 4:
+        st.info("A diagonal needs at least 4 boundary corners - a triangle has no non-adjacent vertex pair.")
+        return
+
+    # Per-vertex adjustment on the georeference-picker map can change the
+    # shape itself, not just its position - when that happens, everything
+    # below (area/perimeter/diagonal/WGS84 points) must come from the
+    # ADJUSTED polygon, not the legs the user originally typed/traced.
+    picker_result = None
+    if origin_latlon is None:
+        picker_result = _render_georeference_picker(polygon_en, origin_en, labels, key_prefix=editor_key)
+        if picker_result:
+            origin_latlon = picker_result["origin_latlon"]
+            polygon_en = picker_result["polygon_en"]
+            closed, closure_error_m = True, 0.0
+
     area = traverse.shoelace_area(polygon_en)
-    perimeter = sum(distance for _, distance in legs)
+    perimeter = sum(distance for _, distance in traverse.legs_from_vertices(polygon_en, close=True))
 
     col1, col2, col3 = st.columns(3)
     col1.metric("Area", f"{area:,.1f} m²")
@@ -172,17 +218,23 @@ def _render_legs_editor_and_result(rows: list, editor_key: str, origin_en: tuple
             "hand-surveyed plans. The shape and diagonal below are approximate; double-check "
             "your bearing/distance values against the original document."
         )
+    elif picker_result:
+        st.caption(
+            "Area/perimeter/diagonal below reflect your dragged map adjustment - the bearing/"
+            "distance table above still shows the values it started from."
+        )
 
     diagonal = traverse.compute_diagonal(polygon_en, labels=labels)
-    if not diagonal:
-        st.info("A diagonal needs at least 4 boundary corners - a triangle has no non-adjacent vertex pair.")
-        return
-
-    if origin_latlon is None:
-        origin_latlon = _render_georeference_picker(polygon_en, origin_en, labels, key_prefix=editor_key)
 
     points_latlon = None
-    if origin_latlon:
+    if origin_latlon and picker_result:
+        # The adjusted shape is already final positions, not a legs walk -
+        # convert it directly rather than through resolve_recomputed_points()
+        # below, which would re-walk the PRE-adjustment legs and silently
+        # discard the drag.
+        points_latlon = [traverse.local_en_to_latlon(origin_en, origin_latlon, e, n) for e, n in polygon_en]
+        diagonal["point_latlon"] = traverse.local_en_to_latlon(origin_en, origin_latlon, *diagonal["point_en"])
+    elif origin_latlon:
         points_latlon, _, ll_diagonal = traverse.resolve_recomputed_points(origin_en, origin_latlon, legs, labels=labels)
         if ll_diagonal:
             diagonal["point_latlon"] = ll_diagonal.get("point_latlon")
@@ -210,6 +262,88 @@ def _render_legs_editor_and_result(rows: list, editor_key: str, origin_en: tuple
 
     if points_latlon and len(points_latlon) >= 3:
         _render_click_map(origin_en, origin_latlon, points_latlon, diagonal, labels, map_key=f"{editor_key}_map")
+
+
+def _rows_from_legs(legs: list) -> list:
+    """Bearing/distance legs (as (bearing_deg, distance_m) tuples, e.g.
+    from traverse.legs_from_vertices()) to data_editor row dicts, in the
+    same shape _parse_legs() reads back - shared by every fallback that
+    derives a leg table from something other than typed/extracted text
+    (a map sketch, an image trace)."""
+    n = len(legs)
+    return [
+        {
+            "beacon": f"PL{i + 1} → PL{i + 2 if i + 2 <= n else 1}",
+            "bearing_text": traverse.format_bearing(bearing),
+            "distance_m": round(distance, 2),
+        }
+        for i, (bearing, distance) in enumerate(legs)
+    ]
+
+
+# A rough starting size (meters) for a shape traced by clicking an
+# unscaled document image - see _render_image_trace_picker()'s docstring
+# for why this is deliberately not meant to be accurate; a typical
+# residential plot's longest side is roughly in this range, which keeps
+# the traced shape a sensible size to start fine-tuning from on a real
+# map, rather than absurdly tiny or huge.
+_IMAGE_TRACE_TARGET_SPAN_M = 40.0
+
+
+def _render_image_trace_picker(image_bytes: bytes, mime_type: str, origin_en: tuple, key_prefix: str) -> dict:
+    """Fallback for tracing a boundary's rough shape by clicking corners
+    directly on the uploaded document's own image (see
+    utils/image_traverse_sketch.py), for when the drawn shape is legible
+    even though the printed bearing/distance numbers next to it aren't.
+
+    Deliberately not distance-accurate: an unscaled scan has no reliable
+    real-world measurement, so the clicked points are normalized to an
+    arbitrary _IMAGE_TRACE_TARGET_SPAN_M starting size rather than treated
+    as real meters - real accuracy comes from dragging the resulting shape
+    (and fine-tuning individual corners) against satellite imagery on the
+    georeference-picker map afterward, same as any other rough shape fed
+    into _render_legs_editor_and_result() with no origin_latlon yet.
+
+    Returns {"rows": [...]} once the user finishes (3+ points) - same row
+    shape _render_map_sketch_picker() returns. Cached in session_state,
+    same reasoning as the other pickers on this page."""
+    result_key = f"{key_prefix}_trace_result"
+    already = st.session_state.get(result_key)
+    if already:
+        return already
+
+    with st.expander("Trace it on the image/PDF", expanded=True):
+        st.caption(
+            "Click your plot's first corner on the preview below, then each next corner in "
+            "order, clockwise. This only needs to capture the rough shape - you'll drag it into "
+            "position (and can fine-tune each corner) on a real map next."
+        )
+        trace = image_traverse_sketch(image_bytes, mime_type=mime_type, key=f"{key_prefix}_trace_widget")
+        if trace and trace.get("points") and len(trace["points"]) >= 3:
+            pts = trace["points"]
+            xs = [p["x"] for p in pts]
+            ys = [p["y"] for p in pts]
+            span = max(max(xs) - min(xs), max(ys) - min(ys)) or 1.0
+            scale = _IMAGE_TRACE_TARGET_SPAN_M / span
+            x0, y0 = pts[0]["x"], pts[0]["y"]
+            # Image y increases downward; northing increases north (up) -
+            # inverted here so the traced shape isn't mirrored top-to-bottom
+            # once it lands on a real map.
+            vertices_en = [
+                (origin_en[0] + (p["x"] - x0) * scale, origin_en[1] - (p["y"] - y0) * scale) for p in pts
+            ]
+            # close=True - the traced points describe a closed plot
+            # boundary, so the last leg (back to the first point) is a
+            # real edge, not something to omit. Without it,
+            # compute_traverse()/build_open_polygon() would treat the
+            # final clicked corner as an inaccurate "closing" vertex and
+            # drop it, silently losing a real point.
+            legs = traverse.legs_from_vertices(vertices_en, close=True)
+            confirmed = {"rows": _rows_from_legs(legs)}
+            st.session_state[result_key] = confirmed
+            st.success(f"Traced {len(pts)} corner(s) - review the rough shape below, then place it on a map.")
+            return confirmed
+    return None
 
 
 def _render_map_sketch_picker(key_prefix: str) -> dict:
@@ -267,40 +401,38 @@ def _render_map_sketch_picker(key_prefix: str) -> dict:
         )
         if sketch:
             origin_latlon = (sketch["origin"]["lat"], sketch["origin"]["lon"])
-            leg_count = len(sketch["legs"])
-            rows = [
-                {
-                    "beacon": f"PL{i + 1} → PL{i + 2 if i + 2 <= leg_count else 1}",
-                    "bearing_text": traverse.format_bearing(leg["bearing"]),
-                    "distance_m": round(leg["distance_m"], 2),
-                }
-                for i, leg in enumerate(sketch["legs"])
-            ]
-            confirmed = {"origin_latlon": origin_latlon, "rows": rows}
+            legs = [(leg["bearing"], leg["distance_m"]) for leg in sketch["legs"]]
+            confirmed = {"origin_latlon": origin_latlon, "rows": _rows_from_legs(legs)}
             st.session_state[result_key] = confirmed
-            st.success(f"Sketch captured - {leg_count} boundary leg(s). Review below before computing.")
+            st.success(f"Sketch captured - {len(legs)} boundary leg(s). Review below before computing.")
             return confirmed
     return None
 
 
-def _render_georeference_picker(polygon_en: list, origin_en: tuple, labels: list, key_prefix: str) -> tuple:
+def _render_georeference_picker(polygon_en: list, origin_en: tuple, labels: list, key_prefix: str) -> dict:
     """Fallback for when no real-world origin is known at all - extraction
     found nothing on an uploaded file, and there's no GPS reading to type
     in either. Lets the user search their general area, then drag the
-    boundary shape (already correct - just not yet positioned, since it
-    comes from the same bearing/distance survey math the rest of this page
-    trusts) onto the real map until it sits on their actual plot, using
-    satellite/street imagery as the reference instead of a coordinate they
-    may not have. See utils/shape_georeferencer.py for the drag mechanics.
+    boundary shape onto the real map until it sits on their actual plot,
+    with each corner also individually draggable for fine-tuning against
+    satellite imagery - not just the whole shape's position, since a shape
+    traced off an unscaled document image (see _render_image_trace_picker())
+    is only ever a rough starting guess, not something to trust to the
+    centimeter the way a real bearing/distance survey is. See
+    utils/shape_georeferencer.py for the drag mechanics.
 
-    Returns the confirmed (lat, lon) once set, else None - cached in
+    Returns {"origin_latlon": (lat, lon), "polygon_en": [...]} once
+    confirmed, else None - polygon_en is the FINAL shape after any
+    per-vertex adjustment, in local EN meters anchored at the new origin,
+    so the caller recomputes area/perimeter/diagonal from THIS rather than
+    reusing the pre-adjustment legs it started with. Cached in
     session_state so it survives reruns from unrelated widgets (typing in
     the search box, editing the legs table again) without needing the
     component to keep re-reporting the same value."""
     confirmed_key = f"{key_prefix}_georef_confirmed"
     already = st.session_state.get(confirmed_key)
     if already:
-        return tuple(already)
+        return already
 
     with st.expander("Don't know the coordinates? Place your shape on a map instead"):
         st.caption(
@@ -339,10 +471,15 @@ def _render_georeference_picker(polygon_en: list, origin_en: tuple, labels: list
             zoom=16 if searched else 6,
             key=f"{key_prefix}_georef_widget",
         )
-        if result:
-            confirmed = (result["lat"], result["lon"])
+        if result and result.get("vertices"):
+            vertices_latlon = [(v["lat"], v["lon"]) for v in result["vertices"]]
+            origin_latlon = vertices_latlon[0]
+            adjusted_polygon_en = [
+                traverse.latlon_to_local_en(origin_en, origin_latlon, lat, lon) for lat, lon in vertices_latlon
+            ]
+            confirmed = {"origin_latlon": origin_latlon, "polygon_en": adjusted_polygon_en}
             st.session_state[confirmed_key] = confirmed
-            st.success(f"Position set: {confirmed[0]:.6f}, {confirmed[1]:.6f}")
+            st.success(f"Position set: {origin_latlon[0]:.6f}, {origin_latlon[1]:.6f}")
             return confirmed
     return None
 
@@ -540,32 +677,84 @@ with tab_upload:
         )
     elif uploaded_file is not None and saved_path:
         # Extraction either failed outright or found no bearing/distance
-        # traverse at all - rather than dead-ending, offer two fallbacks:
-        # sketch the boundary by clicking corners on a real map (gets both
-        # the shape AND its real-world position in one step, no numbers
-        # needed at all), or type values by hand off the file shown below
-        # (which in turn offers the drag-to-georeference picker once a
-        # shape exists, since typing alone gives no real-world position).
+        # traverse at all - rather than dead-ending, offer three fallbacks:
+        # trace the boundary's rough shape by clicking corners on the
+        # document's own image/PDF preview, sketch it by clicking corners
+        # on a real map instead (gets both shape AND real-world position
+        # in one step), or type values by hand off the preview. Only one
+        # is active at a time (a radio, not three always-open expanders) -
+        # switching clears whatever the other methods had already captured
+        # against this same file, below.
         file_type = st.session_state.get("_diag_upload_file_type")
         st.caption("Automatic reading didn't find a bearing/distance traverse in this file.")
 
-        sketch = _render_map_sketch_picker(key_prefix="_diag_upload_manual_editor")
-        if sketch:
-            st.markdown("**Boundary legs (from your sketch - review before trusting)**")
-            _render_legs_editor_and_result(
-                sketch["rows"],
-                editor_key="_diag_upload_manual_editor",
-                origin_en=(0.0, 0.0),
-                origin_latlon=sketch["origin_latlon"],
-            )
+        preview_bytes, preview_mime = _get_preview_bytes(saved_path, file_type)
+
+        col_e, col_n = st.columns(2)
+        fallback_easting = col_e.number_input(
+            "Origin Easting (m) - optional", value=0.0, format="%.3f", key="_diag_upload_fallback_e",
+            help="If your document prints its own origin coordinate (e.g. \"517440.880mE, "
+            "758074.766mN\"), enter it here - used for the local-grid numbers shown below. "
+            "Leave at 0 if you don't have it; it has no effect on where the boundary ends up on "
+            "the real map.",
+        )
+        fallback_northing = col_n.number_input(
+            "Origin Northing (m) - optional", value=0.0, format="%.3f", key="_diag_upload_fallback_n",
+        )
+        fallback_origin_en = (fallback_easting, fallback_northing)
+
+        method = st.radio(
+            "How do you want to build the boundary?",
+            ["Trace it on the image/PDF", "Sketch it on a real map", "Type it in by hand"],
+            key="_diag_upload_fallback_method",
+            horizontal=True,
+        )
+        # Switching methods invalidates whatever a *different* method had
+        # already captured against this file - otherwise a stale sketch/
+        # trace result could keep winning over a newly-chosen method
+        # (_render_*_picker()'s own session_state caching would just
+        # return its old answer forever).
+        if st.session_state.get("_diag_upload_fallback_last_method") != method:
+            st.session_state["_diag_upload_fallback_last_method"] = method
+            st.session_state.pop("_diag_upload_manual_editor", None)
+            st.session_state.pop("_diag_upload_manual_editor_georef_confirmed", None)
+            st.session_state.pop("_diag_upload_manual_editor_sketch_result", None)
+            st.session_state.pop("_diag_upload_manual_editor_trace_result", None)
+
+        if method == "Trace it on the image/PDF":
+            if preview_bytes:
+                trace = _render_image_trace_picker(
+                    preview_bytes, preview_mime, fallback_origin_en, key_prefix="_diag_upload_manual_editor"
+                )
+                if trace:
+                    st.markdown("**Boundary legs (from your trace - a rough shape, review before trusting)**")
+                    _render_legs_editor_and_result(
+                        trace["rows"],
+                        editor_key="_diag_upload_manual_editor",
+                        origin_en=fallback_origin_en,
+                        origin_latlon=None,
+                    )
+            else:
+                st.warning("Couldn't generate a preview of this file to trace on - try Sketch or Type instead.")
+
+        elif method == "Sketch it on a real map":
+            sketch = _render_map_sketch_picker(key_prefix="_diag_upload_manual_editor")
+            if sketch:
+                st.markdown("**Boundary legs (from your sketch - review before trusting)**")
+                _render_legs_editor_and_result(
+                    sketch["rows"],
+                    editor_key="_diag_upload_manual_editor",
+                    origin_en=(0.0, 0.0),
+                    origin_latlon=sketch["origin_latlon"],
+                )
+
         else:
-            st.markdown("**Or, enter the boundary manually**")
             st.caption("Use your uploaded file as reference below, and type the values in by hand.")
-            if file_type in ("png", "jpg", "jpeg") and os.path.isfile(saved_path):
-                st.image(saved_path, caption="Your uploaded file", use_container_width=True)
+            if preview_bytes:
+                st.image(preview_bytes, caption="Your uploaded file", use_container_width=True)
             _render_legs_editor_and_result(
                 _DEFAULT_MANUAL_ROWS,
                 editor_key="_diag_upload_manual_editor",
-                origin_en=(0.0, 0.0),
+                origin_en=fallback_origin_en,
                 origin_latlon=None,
             )
