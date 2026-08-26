@@ -36,6 +36,7 @@ def render_sidebar() -> None:
         st.page_link("app_home.py", label="Land Risk Check", icon="🧭")
         st.page_link("pages/investment_analysis.py", label="Investment Analysis", icon="📈")
         st.page_link("pages/listings.py", label="Land Listings", icon="🏷️")
+        st.page_link("pages/diagonal_calculator.py", label="Diagonal Calculator", icon="📐")
         st.page_link("pages/about.py", label="About & Legal", icon="📄")
         st.page_link("pages/faq.py", label="Common Questions", icon="❓")
 

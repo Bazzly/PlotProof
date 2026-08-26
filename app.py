@@ -33,6 +33,7 @@ about = st.Page("pages/about.py", title="About & Legal", url_path="about")
 faq = st.Page("pages/faq.py", title="Common Questions", url_path="faq")
 investment = st.Page("pages/investment_analysis.py", title="Investment Analysis", url_path="investment-analysis")
 listings = st.Page("pages/listings.py", title="Land Listings", url_path="listings")
+diagonal_calculator = st.Page("pages/diagonal_calculator.py", title="Diagonal Calculator", url_path="diagonal-calculator")
 admin = st.Page("pages/admin_review.py", title="Admin", url_path=ADMIN_URL_PATH)
 
-st.navigation([home, about, faq, investment, listings, admin], position="hidden").run()
+st.navigation([home, about, faq, investment, listings, diagonal_calculator, admin], position="hidden").run()
