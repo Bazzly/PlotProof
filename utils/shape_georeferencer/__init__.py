@@ -17,7 +17,11 @@ user has no GPS reading for the plot either. Two kinds of drag:
 Confirming returns every vertex's final position, not just the origin -
 the shape itself may have changed from per-corner drags, so the caller
 recomputes bearings/distances from these positions directly rather than
-reusing whatever it started with.
+reusing whatever it started with. Each edge shows its own live bearing/
+distance label on the map too (same convention as
+utils/map_traverse_sketch.py's own segment labels), recomputed from the
+CURRENT positions after every drag - so what you see on the map always
+matches what confirming will return, not the pre-drag numbers.
 
 A static component (frontend/index.html) - no React/webpack build step,
 since this is one self-contained widget, not a design system. It talks to

@@ -115,6 +115,13 @@
     window.parent.postMessage({ isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: height }, "*");
   }
 
+  // Catches a hidden-ancestor-becomes-visible case (e.g. this component
+  // ending up inside a collapsed st.expander) that a one-shot
+  // setFrameHeight() right after load would read as zero and never
+  // correct - see utils/shape_georeferencer/frontend/index.html's
+  // identical comment for the full reasoning.
+  new ResizeObserver(() => setFrameHeight()).observe(document.body);
+
   function sizeOverlay() {
     const rect = imgWrap.getBoundingClientRect();
     overlay.setAttribute("width", rect.width);

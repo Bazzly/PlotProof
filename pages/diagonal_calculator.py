@@ -312,6 +312,37 @@ def _parse_scale_denominator(text: str) -> float:
     return value if value > 0 else None
 
 
+def _compute_trace_rows(
+    pts: list, origin_en: tuple, scale_denominator: float, paper_width_mm: float, paper_height_mm: float
+) -> list:
+    """Traced image-fraction points to bearing/distance table rows - the
+    actual conversion _render_image_trace_picker() uses, factored out so
+    the "Sketch it on a real map" fallback can reuse an already-completed
+    trace's raw points (transferred over rather than re-traced) with
+    whatever scale/paper values are currently set, without needing the
+    image-click widget itself. See that function's docstring for the
+    scale math and why close=True matters below."""
+    x0, y0 = pts[0]["x"], pts[0]["y"]
+    if scale_denominator:
+        # fraction-of-page-width/height * physical page size * scale
+        # ratio = real ground distance.
+        easting_scale = paper_width_mm * scale_denominator / 1000.0
+        northing_scale = paper_height_mm * scale_denominator / 1000.0
+    else:
+        xs, ys = [p["x"] for p in pts], [p["y"] for p in pts]
+        span = max(max(xs) - min(xs), max(ys) - min(ys)) or 1.0
+        easting_scale = northing_scale = _IMAGE_TRACE_FALLBACK_SPAN_M / span
+
+    # Image y increases downward; northing increases north (up) - inverted
+    # here so the traced shape isn't mirrored top-to-bottom once it lands
+    # on a real map.
+    vertices_en = [
+        (origin_en[0] + (p["x"] - x0) * easting_scale, origin_en[1] - (p["y"] - y0) * northing_scale) for p in pts
+    ]
+    legs = traverse.legs_from_vertices(vertices_en, close=True)
+    return _rows_from_legs(legs)
+
+
 def _render_image_trace_picker(image_bytes: bytes, mime_type: str, origin_en: tuple, key_prefix: str) -> dict:
     """Fallback for tracing a boundary's shape by clicking corners directly
     on the uploaded document's own image (see utils/image_traverse_sketch.py),
@@ -371,32 +402,7 @@ def _render_image_trace_picker(image_bytes: bytes, mime_type: str, origin_en: tu
             pts = trace["points"]
             st.session_state[points_key] = pts
 
-        x0, y0 = pts[0]["x"], pts[0]["y"]
-        if scale_denominator:
-            # fraction-of-page-width/height * physical page size * scale
-            # ratio = real ground distance - see this function's docstring.
-            easting_scale = paper_width_mm * scale_denominator / 1000.0
-            northing_scale = paper_height_mm * scale_denominator / 1000.0
-        else:
-            xs, ys = [p["x"] for p in pts], [p["y"] for p in pts]
-            span = max(max(xs) - min(xs), max(ys) - min(ys)) or 1.0
-            easting_scale = northing_scale = _IMAGE_TRACE_FALLBACK_SPAN_M / span
-
-        # Image y increases downward; northing increases north (up) -
-        # inverted here so the traced shape isn't mirrored top-to-bottom
-        # once it lands on a real map.
-        vertices_en = [
-            (origin_en[0] + (p["x"] - x0) * easting_scale, origin_en[1] - (p["y"] - y0) * northing_scale)
-            for p in pts
-        ]
-        # close=True - the traced points describe a closed plot boundary,
-        # so the last leg (back to the first point) is a real edge, not
-        # something to omit. Without it, compute_traverse()/
-        # build_open_polygon() would treat the final clicked corner as an
-        # inaccurate "closing" vertex and drop it, silently losing a real
-        # point.
-        legs = traverse.legs_from_vertices(vertices_en, close=True)
-        rows = _rows_from_legs(legs)
+        rows = _compute_trace_rows(pts, origin_en, scale_denominator, paper_width_mm, paper_height_mm)
 
         if scale_denominator:
             st.success(f"Traced {len(pts)} corner(s) at 1:{scale_denominator:g} scale - review the real distances below.")
@@ -497,7 +503,7 @@ def _render_georeference_picker(polygon_en: list, origin_en: tuple, labels: list
     if already:
         return already
 
-    with st.expander("Don't know the coordinates? Place your shape on a map instead"):
+    with st.expander("Don't know the coordinates? Place your shape on a map instead", expanded=True):
         st.caption(
             "Your boundary's shape and size are already correct, from the bearings/distances above - "
             "search your general area, then drag the marker until the shape lines up with your actual "
@@ -743,13 +749,16 @@ with tab_upload:
     elif uploaded_file is not None and saved_path:
         # Extraction either failed outright or found no bearing/distance
         # traverse at all - rather than dead-ending, offer three fallbacks:
-        # trace the boundary's rough shape by clicking corners on the
-        # document's own image/PDF preview, sketch it by clicking corners
-        # on a real map instead (gets both shape AND real-world position
-        # in one step), or type values by hand off the preview. Only one
-        # is active at a time (a radio, not three always-open expanders) -
-        # switching clears whatever the other methods had already captured
-        # against this same file, below.
+        # trace the boundary's shape by clicking corners on the document's
+        # own image/PDF preview, sketch it by clicking corners on a real
+        # map instead (gets both shape AND real-world position in one
+        # step), or type values by hand off the preview. Only one is
+        # active at a time (a radio, not three always-open expanders), but
+        # a completed trace carries over if you switch to "Sketch it on a
+        # real map" - see the method-switch handling below - since that's
+        # exactly the map a traced shape needs next (drag it into position,
+        # per-corner labels included - see utils/shape_georeferencer.py),
+        # not a reason to discard the trace and start clicking from scratch.
         file_type = st.session_state.get("_diag_upload_file_type")
         st.caption("Automatic reading didn't find a bearing/distance traverse in this file.")
 
@@ -774,17 +783,18 @@ with tab_upload:
             key="_diag_upload_fallback_method",
             horizontal=True,
         )
-        # Switching methods invalidates whatever a *different* method had
-        # already captured against this file - otherwise a stale sketch/
-        # trace result could keep winning over a newly-chosen method
-        # (_render_*_picker()'s own session_state caching would just
-        # return its old answer forever).
+        # Switching methods invalidates whatever's currently being SHOWN
+        # (the legs table + any confirmed map position) so it recomputes
+        # fresh from whichever source is now selected - but not the raw
+        # CAPTURED data itself (a trace's clicked points, a completed
+        # click-built sketch), which stays around so switching back (or, for
+        # a trace, over to Sketch - see below) doesn't lose real work.
         if st.session_state.get("_diag_upload_fallback_last_method") != method:
             st.session_state["_diag_upload_fallback_last_method"] = method
             st.session_state.pop("_diag_upload_manual_editor", None)
             st.session_state.pop("_diag_upload_manual_editor_georef_confirmed", None)
-            st.session_state.pop("_diag_upload_manual_editor_sketch_result", None)
-            st.session_state.pop("_diag_upload_manual_editor_trace_points", None)
+
+        trace_points = st.session_state.get("_diag_upload_manual_editor_trace_points")
 
         if method == "Trace it on the image/PDF":
             if preview_bytes:
@@ -803,15 +813,40 @@ with tab_upload:
                 st.warning("Couldn't generate a preview of this file to trace on - try Sketch or Type instead.")
 
         elif method == "Sketch it on a real map":
-            sketch = _render_map_sketch_picker(key_prefix="_diag_upload_manual_editor")
-            if sketch:
-                st.markdown("**Boundary legs (from your sketch - review before trusting)**")
-                _render_legs_editor_and_result(
-                    sketch["rows"],
-                    editor_key="_diag_upload_manual_editor",
-                    origin_en=(0.0, 0.0),
-                    origin_latlon=sketch["origin_latlon"],
+            if trace_points:
+                # A trace already exists - transfer it here instead of
+                # starting a fresh click-to-build sketch from scratch. Reads
+                # the scale/paper-size fields straight from session_state
+                # rather than re-rendering them (they're the Trace tab's
+                # own widgets, and Streamlit keeps their value by key
+                # regardless of which tab is currently shown).
+                st.caption(
+                    "Using the shape you traced from the document - drag it into position below "
+                    "(and fine-tune any corner) against the satellite image."
                 )
+                scale_denominator = _parse_scale_denominator(
+                    st.session_state.get("_diag_upload_manual_editor_trace_scale", "")
+                )
+                paper_width_mm = st.session_state.get("_diag_upload_manual_editor_trace_paper_w", 210.0)
+                paper_height_mm = st.session_state.get("_diag_upload_manual_editor_trace_paper_h", 297.0)
+                rows = _compute_trace_rows(trace_points, fallback_origin_en, scale_denominator, paper_width_mm, paper_height_mm)
+                st.markdown("**Boundary legs (from your trace - review before trusting)**")
+                _render_legs_editor_and_result(
+                    rows,
+                    editor_key="_diag_upload_manual_editor",
+                    origin_en=fallback_origin_en,
+                    origin_latlon=None,
+                )
+            else:
+                sketch = _render_map_sketch_picker(key_prefix="_diag_upload_manual_editor")
+                if sketch:
+                    st.markdown("**Boundary legs (from your sketch - review before trusting)**")
+                    _render_legs_editor_and_result(
+                        sketch["rows"],
+                        editor_key="_diag_upload_manual_editor",
+                        origin_en=(0.0, 0.0),
+                        origin_latlon=sketch["origin_latlon"],
+                    )
 
         else:
             st.caption("Use your uploaded file as reference below, and type the values in by hand.")

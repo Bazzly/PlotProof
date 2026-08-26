@@ -15,6 +15,10 @@
   }
   #confirmBtn:hover { background: #0d3f21; }
   #hint { font-size: 12px; color: #845a0f; margin-top: 6px; }
+  .pp-seg-label {
+    background: #fbf8f1; border: 1px solid #d4cdbf; border-radius: 6px;
+    padding: 1px 6px; font-size: 11px; color: #25170c; white-space: nowrap;
+  }
 </style>
 </head>
 <body>
@@ -33,12 +37,54 @@
   let map = null;
   let polygon = null;
   let vertexMarkers = [];   // one draggable L.marker per vertex - index 0 is the origin
+  let segLabels = [];       // one non-interactive L.marker(divIcon) per edge, at its midpoint
   let currentLatLngs = null; // [[lat, lon], ...] - the live, possibly per-vertex-adjusted shape
   let currentArgs = null;
 
   function toLatLon(originLat, originLon, easting, northing) {
     const metersPerDegLon = METERS_PER_DEG_LAT * Math.cos(originLat * Math.PI / 180);
     return [originLat + northing / METERS_PER_DEG_LAT, originLon + easting / metersPerDegLon];
+  }
+
+  // Real bearing/distance between two CURRENT lat/lon vertices - same
+  // flat-earth approximation and whole-circle-bearing convention as
+  // utils/map_traverse_sketch.py's own bearingDistance(), so a shape's
+  // edge labels read the same way whichever tool produced or is now
+  // displaying it.
+  function bearingDistance(fromLL, toLL) {
+    const metersPerDegLon = METERS_PER_DEG_LAT * Math.cos(fromLL[0] * Math.PI / 180);
+    const dNorthing = (toLL[0] - fromLL[0]) * METERS_PER_DEG_LAT;
+    const dEasting = (toLL[1] - fromLL[1]) * metersPerDegLon;
+    const distance = Math.sqrt(dNorthing * dNorthing + dEasting * dEasting);
+    let bearing = Math.atan2(dEasting, dNorthing) * 180 / Math.PI;
+    bearing = (bearing + 360) % 360;
+    return { bearing, distance };
+  }
+
+  function formatBearing(deg) {
+    let whole = Math.floor(deg);
+    let minutes = Math.round((deg - whole) * 60);
+    if (minutes === 60) { whole += 1; minutes = 0; }
+    return whole + "°" + String(minutes).padStart(2, "0") + "'";
+  }
+
+  function segLabelIcon(text) {
+    return L.divIcon({ className: "", html: '<div class="pp-seg-label">' + text + "</div>", iconSize: null });
+  }
+
+  function redrawSegmentLabels() {
+    segLabels.forEach((m) => map.removeLayer(m));
+    segLabels = [];
+    const n = currentLatLngs.length;
+    for (let i = 0; i < n; i++) {
+      const from = currentLatLngs[i];
+      const to = currentLatLngs[(i + 1) % n];
+      const { bearing, distance } = bearingDistance(from, to);
+      const mid = [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2];
+      segLabels.push(
+        L.marker(mid, { icon: segLabelIcon(formatBearing(bearing) + " · " + distance.toFixed(2) + "m"), interactive: false }).addTo(map)
+      );
+    }
   }
 
   function nodeIcon(isOrigin) {
@@ -65,6 +111,7 @@
     } else {
       polygon.setLatLngs(currentLatLngs);
     }
+    redrawSegmentLabels();
   }
 
   // Rebuilds the whole shape at a new origin position - used on first load
@@ -116,6 +163,16 @@
     const height = document.documentElement.scrollHeight;
     window.parent.postMessage({ isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: height }, "*");
   }
+
+  // A one-shot setFrameHeight() right after init (below) reads a stale,
+  // often-zero height if this component is rendered inside something that
+  // starts hidden (e.g. a collapsed st.expander - exactly
+  // _render_georeference_picker()'s own default) and only becomes visible
+  // later - nothing would ever correct it otherwise. A ResizeObserver on
+  // <body> catches the moment a hidden ancestor's collapse actually
+  // changes this element's real size (expander opening, markers/labels
+  // added or removed, map height itself changing) and reports it fresh.
+  new ResizeObserver(() => setFrameHeight()).observe(document.body);
 
   function initMap(args) {
     const mapDiv = document.getElementById("map");
