@@ -410,3 +410,24 @@ def resolve_recomputed_points(
     if diagonal:
         diagonal["point_latlon"] = _to_latlon(*diagonal["point_en"])
     return points, closed, diagonal
+
+
+def latlon_to_local_en(
+    origin_en: Tuple[float, float],
+    origin_latlon: Tuple[float, float],
+    lat: float,
+    lon: float,
+) -> Tuple[float, float]:
+    """The exact inverse of resolve_recomputed_points()'s internal
+    _to_latlon() - same flat-earth approximation, run backwards: a
+    real-world (lat, lon) to its (easting, northing) offset from origin_en,
+    given the origin's own (lat, lon). Used by the click-to-coordinate map
+    (pages/diagonal_calculator.py) so a clicked point reads out in the same
+    local-grid units as every other coordinate already shown on that page,
+    rather than a second, differently-derived value."""
+    origin_easting, origin_northing = origin_en
+    lat0, lon0 = origin_latlon
+    meters_per_deg_lon = _METERS_PER_DEG_LAT * math.cos(math.radians(lat0))
+    northing = origin_northing + (lat - lat0) * _METERS_PER_DEG_LAT
+    easting = origin_easting + (lon - lon0) * meters_per_deg_lon
+    return easting, northing

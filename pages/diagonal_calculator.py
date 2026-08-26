@@ -14,7 +14,11 @@ full document upload; this page exposes the same math directly, two ways -
 
 Both feed the same traverse math (utils/traverse.py) and render the same
 result card - editing a table is the one shared interaction, whichever tab
-fills it first.
+fills it first. Whenever a real-world origin is known (always true for an
+uploaded document; optional for manual entry), the boundary is also drawn
+on a real map (see _render_click_map()) - clicking anywhere on it reads
+off that point's coordinate directly, without needing to work out its
+bearing/distance from the origin by hand first.
 
 Deliberately excludes everything the main flow does that isn't about the
 diagonal itself: no shared-registry overlap check, no risk score, no PDF
@@ -27,8 +31,11 @@ degrees - see compute_diagonal()'s docstring). Reachable from the sidebar
 import os
 import traceback
 
+import folium
 import streamlit as st
 from dotenv import load_dotenv
+from folium.plugins import Fullscreen
+from streamlit_folium import st_folium
 
 from utils import coordinates, crs_utils, file_handler, nav, rate_limit, theme, traverse, vision_extract
 
@@ -157,16 +164,16 @@ def _render_legs_editor_and_result(rows: list, editor_key: str, origin_en: tuple
         st.info("A diagonal needs at least 4 boundary corners - a triangle has no non-adjacent vertex pair.")
         return
 
-    point_latlon = None
+    points_latlon = None
     if origin_latlon:
-        _, _, ll_diagonal = traverse.resolve_recomputed_points(origin_en, origin_latlon, legs, labels=labels)
+        points_latlon, _, ll_diagonal = traverse.resolve_recomputed_points(origin_en, origin_latlon, legs, labels=labels)
         if ll_diagonal:
-            point_latlon = ll_diagonal.get("point_latlon")
+            diagonal["point_latlon"] = ll_diagonal.get("point_latlon")
 
     origin_label = labels[0] if labels else "PL1"
     coord_lines = f'<p>Coordinate (local grid): <strong>{diagonal["point_label"]}</strong></p>'
-    if point_latlon:
-        lat, lon = point_latlon
+    if diagonal.get("point_latlon"):
+        lat, lon = diagonal["point_latlon"]
         coord_lines += f"<p>Coordinate (WGS84): <strong>{lat:.6f}, {lon:.6f}</strong></p>"
 
     st.markdown(
@@ -183,6 +190,70 @@ def _render_legs_editor_and_result(rows: list, editor_key: str, origin_en: tuple
         """,
         unsafe_allow_html=True,
     )
+
+    if points_latlon and len(points_latlon) >= 3:
+        _render_click_map(origin_en, origin_latlon, points_latlon, diagonal, labels, map_key=f"{editor_key}_map")
+
+
+def _render_click_map(origin_en: tuple, origin_latlon: tuple, points_latlon: list, diagonal: dict, labels: list, map_key: str) -> None:
+    """A real map (same folium/streamlit_folium stack as app_home.py's own
+    risk-check map) with the computed boundary overlaid, georeferenced from
+    origin_latlon - so you're not limited to the one bearing/distance-derived
+    diagonal point above; click anywhere (a beacon, a spot inside the plot,
+    anything) and read its coordinate off directly, in both WGS84 and the
+    same local-grid units as the rest of this page."""
+    st.markdown("**Click anywhere on the map to read off that point's coordinate**")
+    centroid_lat = sum(lat for lat, _ in points_latlon) / len(points_latlon)
+    centroid_lon = sum(lon for _, lon in points_latlon) / len(points_latlon)
+
+    fmap = folium.Map(location=[centroid_lat, centroid_lon], zoom_start=19, tiles=None)
+    folium.TileLayer("OpenStreetMap", name="Street").add_to(fmap)
+    folium.TileLayer(
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri, Maxar, Earthstar Geographics",
+        name="Satellite",
+        show=False,
+    ).add_to(fmap)
+    Fullscreen(position="topright").add_to(fmap)
+
+    folium.Polygon(
+        locations=points_latlon,
+        color=theme.ACCENT_LIGHT,
+        fill=True,
+        fill_color=theme.ACCENT_LIGHT,
+        fill_opacity=0.25,
+        tooltip="Your plot boundary",
+    ).add_to(fmap)
+    for i, (lat, lon) in enumerate(points_latlon):
+        folium.CircleMarker(
+            location=[lat, lon], radius=5,
+            color=theme.STATUS["good"], fill=True, fill_color=theme.STATUS["good"], fill_opacity=1,
+            tooltip=labels[i] if i < len(labels) else f"point {i + 1}",
+        ).add_to(fmap)
+    if diagonal.get("point_latlon"):
+        folium.Marker(
+            location=diagonal["point_latlon"],
+            tooltip=f"Diagonal target ({diagonal['target_label']})",
+            icon=folium.Icon(color="red", icon="flag"),
+        ).add_to(fmap)
+
+    folium.LayerControl(position="topright", collapsed=True).add_to(fmap)
+    map_data = st_folium(fmap, width=700, height=420, key=map_key, returned_objects=["last_clicked"])
+
+    clicked = map_data.get("last_clicked") if map_data else None
+    if clicked:
+        lat, lon = clicked["lat"], clicked["lng"]
+        easting, northing = traverse.latlon_to_local_en(origin_en, origin_latlon, lat, lon)
+        st.markdown(
+            f"""
+            <div class="pp-card">
+              <div class="pp-card-title">Clicked point</div>
+              <p>Coordinate (local grid): <strong>{easting:.3f}mE / {northing:.3f}mN</strong></p>
+              <p>Coordinate (WGS84): <strong>{lat:.6f}, {lon:.6f}</strong></p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 tab_manual, tab_upload = st.tabs(["Enter Manually", "Upload a Survey Plan"])
