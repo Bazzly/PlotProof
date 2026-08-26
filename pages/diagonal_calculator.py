@@ -42,6 +42,7 @@ degrees - see compute_diagonal()'s docstring). Reachable from the sidebar
 """
 
 import os
+import re
 import traceback
 
 import folium
@@ -281,69 +282,131 @@ def _rows_from_legs(legs: list) -> list:
     ]
 
 
-# A rough starting size (meters) for a shape traced by clicking an
-# unscaled document image - see _render_image_trace_picker()'s docstring
-# for why this is deliberately not meant to be accurate; a typical
-# residential plot's longest side is roughly in this range, which keeps
-# the traced shape a sensible size to start fine-tuning from on a real
-# map, rather than absurdly tiny or huge.
-_IMAGE_TRACE_TARGET_SPAN_M = 40.0
+# Fallback starting size (meters) for a traced shape when no plan scale is
+# given at all - a typical residential plot's longest side is roughly in
+# this range, which keeps the shape a sensible size to start fine-tuning
+# from on a real map, rather than absurdly tiny or huge. Superseded by a
+# real scale/paper-size calculation whenever one is provided (see
+# _render_image_trace_picker()).
+_IMAGE_TRACE_FALLBACK_SPAN_M = 40.0
+
+# "1:500", "1 : 1,000", "scale 1:2000" etc. - Nigerian survey plans print
+# this as e.g. "SCALE:-1:1000" (see coordinates.py's own _SCALE_RE, which
+# reads the same convention from extracted text rather than a typed field).
+_SCALE_RE = re.compile(r"1\s*:\s*([\d,]+\.?\d*)")
+
+
+def _parse_scale_denominator(text: str) -> float:
+    """"1:1000" (or "1 : 1,000", "Scale 1:500") -> 1000.0. None if text is
+    empty or doesn't match - the caller falls back to an unscaled rough
+    shape in that case rather than guessing."""
+    if not text or not text.strip():
+        return None
+    match = _SCALE_RE.search(text)
+    if not match:
+        return None
+    try:
+        value = float(match.group(1).replace(",", ""))
+    except ValueError:
+        return None
+    return value if value > 0 else None
 
 
 def _render_image_trace_picker(image_bytes: bytes, mime_type: str, origin_en: tuple, key_prefix: str) -> dict:
-    """Fallback for tracing a boundary's rough shape by clicking corners
-    directly on the uploaded document's own image (see
-    utils/image_traverse_sketch.py), for when the drawn shape is legible
-    even though the printed bearing/distance numbers next to it aren't.
+    """Fallback for tracing a boundary's shape by clicking corners directly
+    on the uploaded document's own image (see utils/image_traverse_sketch.py),
+    for when the drawn shape is legible even though the printed bearing/
+    distance numbers next to it aren't.
 
-    Deliberately not distance-accurate: an unscaled scan has no reliable
-    real-world measurement, so the clicked points are normalized to an
-    arbitrary _IMAGE_TRACE_TARGET_SPAN_M starting size rather than treated
-    as real meters - real accuracy comes from dragging the resulting shape
-    (and fine-tuning individual corners) against satellite imagery on the
-    georeference-picker map afterward, same as any other rough shape fed
-    into _render_legs_editor_and_result() with no origin_latlon yet.
+    Distance accuracy depends on the plan's scale (as printed, e.g.
+    "SCALE:-1:1000") and the physical paper size the image represents -
+    both typed in below, defaulting to A4 portrait. Given both, a clicked
+    point's fraction of the page width/height converts to real paper mm,
+    then to ground meters via the scale ratio - the same math a surveyor
+    reading a scale ruler off the plan would do by hand. Without a scale
+    (left blank, or unreadable on the document), falls back to an
+    arbitrary _IMAGE_TRACE_FALLBACK_SPAN_M-sized rough shape instead, same
+    as before this existed - real accuracy in that case comes only from
+    dragging the resulting shape (and fine-tuning individual corners)
+    against satellite imagery on the georeference-picker map afterward.
 
-    Returns {"rows": [...]} once the user finishes (3+ points) - same row
-    shape _render_map_sketch_picker() returns. Cached in session_state,
-    same reasoning as the other pickers on this page."""
-    result_key = f"{key_prefix}_trace_result"
-    already = st.session_state.get(result_key)
-    if already:
-        return already
+    The raw clicked points are cached separately from the computed rows
+    below (keyed by "_trace_points", not "_trace_result") so adjusting the
+    scale/paper size afterward recomputes distances without needing to
+    re-trace every corner from scratch.
+
+    Returns {"rows": [...]} once 3+ points exist - same row shape
+    _render_map_sketch_picker() returns."""
+    points_key = f"{key_prefix}_trace_points"
 
     with st.expander("Trace it on the image/PDF", expanded=True):
         st.caption(
             "Click your plot's first corner on the preview below, then each next corner in "
-            "order, clockwise. This only needs to capture the rough shape - you'll drag it into "
-            "position (and can fine-tune each corner) on a real map next."
+            "order, clockwise."
         )
-        trace = image_traverse_sketch(image_bytes, mime_type=mime_type, key=f"{key_prefix}_trace_widget")
-        if trace and trace.get("points") and len(trace["points"]) >= 3:
+
+        col_scale, col_w, col_h = st.columns(3)
+        scale_text = col_scale.text_input(
+            "Plan scale (as printed)", placeholder="1:1000", key=f"{key_prefix}_trace_scale",
+            help="Most Nigerian survey plans print this, e.g. \"SCALE:-1:1000\". Enter it for real "
+            "distances; leave blank for a rough, generically-sized shape instead.",
+        )
+        paper_width_mm = col_w.number_input(
+            "Paper width (mm)", value=210.0, min_value=1.0, format="%.0f", key=f"{key_prefix}_trace_paper_w",
+            help="Assumes the image frames one full page this size, portrait A4 by default - adjust "
+            "if your document is a different size, or landscape (swap width/height).",
+        )
+        paper_height_mm = col_h.number_input(
+            "Paper height (mm)", value=297.0, min_value=1.0, format="%.0f", key=f"{key_prefix}_trace_paper_h",
+        )
+        scale_denominator = _parse_scale_denominator(scale_text)
+        if scale_text.strip() and not scale_denominator:
+            st.warning("Couldn't read that as a scale - use the format \"1:1000\". Using a rough, unscaled shape instead.")
+
+        pts = st.session_state.get(points_key)
+        if not pts:
+            trace = image_traverse_sketch(image_bytes, mime_type=mime_type, key=f"{key_prefix}_trace_widget")
+            if not (trace and trace.get("points") and len(trace["points"]) >= 3):
+                return None
             pts = trace["points"]
-            xs = [p["x"] for p in pts]
-            ys = [p["y"] for p in pts]
+            st.session_state[points_key] = pts
+
+        x0, y0 = pts[0]["x"], pts[0]["y"]
+        if scale_denominator:
+            # fraction-of-page-width/height * physical page size * scale
+            # ratio = real ground distance - see this function's docstring.
+            easting_scale = paper_width_mm * scale_denominator / 1000.0
+            northing_scale = paper_height_mm * scale_denominator / 1000.0
+        else:
+            xs, ys = [p["x"] for p in pts], [p["y"] for p in pts]
             span = max(max(xs) - min(xs), max(ys) - min(ys)) or 1.0
-            scale = _IMAGE_TRACE_TARGET_SPAN_M / span
-            x0, y0 = pts[0]["x"], pts[0]["y"]
-            # Image y increases downward; northing increases north (up) -
-            # inverted here so the traced shape isn't mirrored top-to-bottom
-            # once it lands on a real map.
-            vertices_en = [
-                (origin_en[0] + (p["x"] - x0) * scale, origin_en[1] - (p["y"] - y0) * scale) for p in pts
-            ]
-            # close=True - the traced points describe a closed plot
-            # boundary, so the last leg (back to the first point) is a
-            # real edge, not something to omit. Without it,
-            # compute_traverse()/build_open_polygon() would treat the
-            # final clicked corner as an inaccurate "closing" vertex and
-            # drop it, silently losing a real point.
-            legs = traverse.legs_from_vertices(vertices_en, close=True)
-            confirmed = {"rows": _rows_from_legs(legs)}
-            st.session_state[result_key] = confirmed
-            st.success(f"Traced {len(pts)} corner(s) - review the rough shape below, then place it on a map.")
-            return confirmed
-    return None
+            easting_scale = northing_scale = _IMAGE_TRACE_FALLBACK_SPAN_M / span
+
+        # Image y increases downward; northing increases north (up) -
+        # inverted here so the traced shape isn't mirrored top-to-bottom
+        # once it lands on a real map.
+        vertices_en = [
+            (origin_en[0] + (p["x"] - x0) * easting_scale, origin_en[1] - (p["y"] - y0) * northing_scale)
+            for p in pts
+        ]
+        # close=True - the traced points describe a closed plot boundary,
+        # so the last leg (back to the first point) is a real edge, not
+        # something to omit. Without it, compute_traverse()/
+        # build_open_polygon() would treat the final clicked corner as an
+        # inaccurate "closing" vertex and drop it, silently losing a real
+        # point.
+        legs = traverse.legs_from_vertices(vertices_en, close=True)
+        rows = _rows_from_legs(legs)
+
+        if scale_denominator:
+            st.success(f"Traced {len(pts)} corner(s) at 1:{scale_denominator:g} scale - review the real distances below.")
+        else:
+            st.success(f"Traced {len(pts)} corner(s) - rough shape only (no scale given), review below.")
+        if st.button("Retrace from scratch", key=f"{key_prefix}_trace_retrace_btn"):
+            st.session_state.pop(points_key, None)
+            st.rerun()
+
+        return {"rows": rows}
 
 
 def _render_map_sketch_picker(key_prefix: str) -> dict:
@@ -615,6 +678,8 @@ with tab_upload:
                 # georeferencing done against the previous one.
                 st.session_state.pop("_diag_upload_manual_editor", None)
                 st.session_state.pop("_diag_upload_manual_editor_georef_confirmed", None)
+                st.session_state.pop("_diag_upload_manual_editor_sketch_result", None)
+                st.session_state.pop("_diag_upload_manual_editor_trace_points", None)
 
                 use_vision = (
                     file_type in ("png", "jpg", "jpeg")
@@ -719,7 +784,7 @@ with tab_upload:
             st.session_state.pop("_diag_upload_manual_editor", None)
             st.session_state.pop("_diag_upload_manual_editor_georef_confirmed", None)
             st.session_state.pop("_diag_upload_manual_editor_sketch_result", None)
-            st.session_state.pop("_diag_upload_manual_editor_trace_result", None)
+            st.session_state.pop("_diag_upload_manual_editor_trace_points", None)
 
         if method == "Trace it on the image/PDF":
             if preview_bytes:
@@ -727,7 +792,7 @@ with tab_upload:
                     preview_bytes, preview_mime, fallback_origin_en, key_prefix="_diag_upload_manual_editor"
                 )
                 if trace:
-                    st.markdown("**Boundary legs (from your trace - a rough shape, review before trusting)**")
+                    st.markdown("**Boundary legs (from your trace - review before trusting)**")
                     _render_legs_editor_and_result(
                         trace["rows"],
                         editor_key="_diag_upload_manual_editor",
