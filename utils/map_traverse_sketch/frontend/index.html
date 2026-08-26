@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  html, body { margin: 0; padding: 0; font-family: 'Work Sans', -apple-system, BlinkMacSystemFont, sans-serif; background: #f9f5ec; }
+  #wrap { padding: 8px; box-sizing: border-box; }
+  #map { width: 100%; border-radius: 12px; border: 1px solid #d4cdbf; cursor: crosshair; }
+  #bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
+  #readout { font-size: 13px; color: #3b3129; flex: 1 1 auto; min-width: 200px; }
+  #readout strong { color: #104f29; }
+  .pp-btn {
+    background: #104f29; color: #fff; border: none; border-radius: 999px;
+    padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .pp-btn:hover { background: #0d3f21; }
+  .pp-btn:disabled { background: #cfc8ba; cursor: not-allowed; }
+  .pp-btn--outline {
+    background: transparent; color: #104f29; border: 1px solid #104f29;
+  }
+  .pp-btn--outline:hover { background: #ecf3ee; }
+  #btnrow { display: flex; gap: 8px; flex-wrap: wrap; }
+  #hint { font-size: 12px; color: #845a0f; margin-top: 6px; }
+  .pp-seg-label {
+    background: #fbf8f1; border: 1px solid #d4cdbf; border-radius: 6px;
+    padding: 1px 6px; font-size: 11px; color: #25170c; white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="map"></div>
+  <div id="bar">
+    <span id="readout">Click your plot's first corner on the map.</span>
+    <div id="btnrow">
+      <button id="undoBtn" class="pp-btn pp-btn--outline" type="button" disabled>Undo last point</button>
+      <button id="clearBtn" class="pp-btn pp-btn--outline" type="button" disabled>Start over</button>
+      <button id="finishBtn" class="pp-btn" type="button" disabled>Finish (need 3+ points)</button>
+    </div>
+  </div>
+  <div id="hint">Click each corner in order. The bearing/distance from the last point tracks your cursor until you click the next one.</div>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const METERS_PER_DEG_LAT = 111320.0;
+
+  let map = null;
+  let points = [];       // [{lat, lng}, ...] in click order
+  let markers = [];      // one per point
+  let segLines = [];     // one per committed segment (points[i-1] -> points[i])
+  let segLabels = [];    // one L.Marker(divIcon) per committed segment, at its midpoint
+  let previewLine = null;
+  let currentArgs = null;
+
+  function bearingDistance(from, to) {
+    const metersPerDegLon = METERS_PER_DEG_LAT * Math.cos(from.lat * Math.PI / 180);
+    const dNorthing = (to.lat - from.lat) * METERS_PER_DEG_LAT;
+    const dEasting = (to.lng - from.lng) * metersPerDegLon;
+    const distance = Math.sqrt(dNorthing * dNorthing + dEasting * dEasting);
+    let bearing = Math.atan2(dEasting, dNorthing) * 180 / Math.PI;
+    bearing = (bearing + 360) % 360;
+    return { bearing, distance };
+  }
+
+  function formatBearing(deg) {
+    let whole = Math.floor(deg);
+    let minutes = Math.round((deg - whole) * 60);
+    if (minutes === 60) { whole += 1; minutes = 0; }
+    return whole + "°" + String(minutes).padStart(2, "0") + "'";
+  }
+
+  function pointLabel(i) {
+    return "PL" + (i + 1);
+  }
+
+  function segLabelIcon(text) {
+    return L.divIcon({ className: "", html: '<div class="pp-seg-label">' + text + "</div>", iconSize: null });
+  }
+
+  function updateButtons() {
+    document.getElementById("undoBtn").disabled = points.length === 0;
+    document.getElementById("clearBtn").disabled = points.length === 0;
+    const finishBtn = document.getElementById("finishBtn");
+    finishBtn.disabled = points.length < 3;
+    finishBtn.textContent = points.length < 3 ? "Finish (need 3+ points)" : "Finish sketch (" + points.length + " points)";
+  }
+
+  function setReadout(html) {
+    document.getElementById("readout").innerHTML = html;
+  }
+
+  function updatePreview(mouseLatLng) {
+    if (points.length === 0 || !mouseLatLng) return;
+    const from = points[points.length - 1];
+    const { bearing, distance } = bearingDistance(from, mouseLatLng);
+    if (previewLine) map.removeLayer(previewLine);
+    previewLine = L.polyline([from, mouseLatLng], { color: "#104f29", weight: 2, dashArray: "6 6" }).addTo(map);
+    setReadout(
+      pointLabel(points.length - 1) + " → next: <strong>" + formatBearing(bearing) + " · " +
+      distance.toFixed(2) + "m</strong>"
+    );
+  }
+
+  function addPoint(latlng) {
+    points.push(latlng);
+    const idx = points.length - 1;
+    const marker = L.circleMarker(latlng, {
+      radius: 6, color: "#0ca30c", fillColor: "#0ca30c", fillOpacity: 1,
+    }).bindTooltip(pointLabel(idx), { permanent: true, direction: "top", offset: [0, -6] }).addTo(map);
+    markers.push(marker);
+
+    if (idx > 0) {
+      const from = points[idx - 1];
+      const { bearing, distance } = bearingDistance(from, latlng);
+      const line = L.polyline([from, latlng], { color: "#104f29", weight: 3 }).addTo(map);
+      segLines.push(line);
+      const mid = L.latLng((from.lat + latlng.lat) / 2, (from.lng + latlng.lng) / 2);
+      const label = L.marker(mid, {
+        icon: segLabelIcon(formatBearing(bearing) + " · " + distance.toFixed(2) + "m"),
+        interactive: false,
+      }).addTo(map);
+      segLabels.push(label);
+    }
+
+    if (previewLine) { map.removeLayer(previewLine); previewLine = null; }
+    setReadout(
+      idx === 0
+        ? "First point set (" + pointLabel(0) + "). Move the mouse toward the next corner."
+        : pointLabel(idx) + " set. Move the mouse toward the next corner."
+    );
+    updateButtons();
+  }
+
+  function undoLastPoint() {
+    if (points.length === 0) return;
+    points.pop();
+    const marker = markers.pop();
+    if (marker) map.removeLayer(marker);
+    const line = segLines.pop();
+    if (line) map.removeLayer(line);
+    const label = segLabels.pop();
+    if (label) map.removeLayer(label);
+    if (previewLine) { map.removeLayer(previewLine); previewLine = null; }
+    setReadout(
+      points.length === 0
+        ? "Click your plot's first corner on the map."
+        : pointLabel(points.length - 1) + " → next: move the mouse toward the next corner."
+    );
+    updateButtons();
+  }
+
+  function clearAll() {
+    markers.forEach((m) => map.removeLayer(m));
+    segLines.forEach((l) => map.removeLayer(l));
+    segLabels.forEach((l) => map.removeLayer(l));
+    if (previewLine) map.removeLayer(previewLine);
+    points = []; markers = []; segLines = []; segLabels = []; previewLine = null;
+    setReadout("Click your plot's first corner on the map.");
+    updateButtons();
+  }
+
+  function setFrameHeight() {
+    const height = document.documentElement.scrollHeight;
+    window.parent.postMessage({ isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: height }, "*");
+  }
+
+  function initMap(args) {
+    const mapDiv = document.getElementById("map");
+    mapDiv.style.height = (args.height || 480) + "px";
+
+    map = L.map("map").setView([args.center_lat, args.center_lon], args.zoom || 17);
+    const street = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors",
+    }).addTo(map);
+    const satellite = L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      { attribution: "Esri, Maxar, Earthstar Geographics" }
+    );
+    L.control.layers({ "Street": street, "Satellite": satellite }).addTo(map);
+
+    map.on("click", (e) => addPoint(e.latlng));
+    map.on("mousemove", (e) => updatePreview(e.latlng));
+
+    document.getElementById("undoBtn").addEventListener("click", undoLastPoint);
+    document.getElementById("clearBtn").addEventListener("click", clearAll);
+    document.getElementById("finishBtn").addEventListener("click", () => {
+      if (points.length < 3) return;
+      const legs = [];
+      for (let i = 1; i < points.length; i++) {
+        const { bearing, distance } = bearingDistance(points[i - 1], points[i]);
+        legs.push({ bearing: bearing, distance_m: distance });
+      }
+      window.parent.postMessage({
+        isStreamlitMessage: true,
+        type: "streamlit:setComponentValue",
+        value: { origin: { lat: points[0].lat, lon: points[0].lng }, legs: legs },
+        dataType: "json",
+      }, "*");
+    });
+
+    updateButtons();
+    setTimeout(setFrameHeight, 50);
+  }
+
+  window.addEventListener("message", (event) => {
+    if (!event.data || event.data.type !== "streamlit:render") return;
+    const args = event.data.args;
+
+    if (!map) {
+      currentArgs = args;
+      initMap(args);
+      return;
+    }
+
+    const prevArgs = currentArgs;
+    currentArgs = args;
+    const centerChanged = prevArgs.center_lat !== args.center_lat || prevArgs.center_lon !== args.center_lon;
+    if (centerChanged) {
+      // A fresh area search - repositions (and, since a just-found place is
+      // usually passed with a tighter zoom than the initial wide country
+      // view, re-zooms) the view only, never the points already sketched
+      // (that would silently discard real work).
+      map.setView([args.center_lat, args.center_lon], args.zoom || map.getZoom());
+    }
+    setFrameHeight();
+  });
+
+  window.parent.postMessage({ isStreamlitMessage: true, type: "streamlit:componentReady", apiVersion: 1 }, "*");
+</script>
+</body>
+</html>

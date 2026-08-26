@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  html, body { margin: 0; padding: 0; font-family: 'Work Sans', -apple-system, BlinkMacSystemFont, sans-serif; background: #f9f5ec; }
+  #wrap { padding: 8px; box-sizing: border-box; }
+  #map { width: 100%; border-radius: 12px; border: 1px solid #d4cdbf; }
+  #bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
+  #readout { font-size: 13px; color: #3b3129; }
+  #confirmBtn {
+    background: #104f29; color: #fff; border: none; border-radius: 999px;
+    padding: 8px 18px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  #confirmBtn:hover { background: #0d3f21; }
+  #hint { font-size: 12px; color: #845a0f; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="map"></div>
+  <div id="bar">
+    <span id="readout">Drag the green marker onto your plot</span>
+    <button id="confirmBtn" type="button">Confirm this position</button>
+  </div>
+  <div id="hint">Search above to jump to your area, then drag the marker until the shape lines up with your plot on the satellite image.</div>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const METERS_PER_DEG_LAT = 111320.0;
+
+  let map = null;
+  let marker = null;
+  let polygon = null;
+  let vertexMarkers = [];
+  let currentArgs = null;
+
+  function toLatLon(originLat, originLon, easting, northing) {
+    const metersPerDegLon = METERS_PER_DEG_LAT * Math.cos(originLat * Math.PI / 180);
+    return [originLat + northing / METERS_PER_DEG_LAT, originLon + easting / metersPerDegLon];
+  }
+
+  function updateShape(lat, lon) {
+    const latlngs = currentArgs.vertices_en.map(([e, n]) => toLatLon(lat, lon, e, n));
+    if (!polygon) {
+      polygon = L.polygon(latlngs, { color: "#104f29", fillColor: "#104f29", fillOpacity: 0.25 }).addTo(map);
+    } else {
+      polygon.setLatLngs(latlngs);
+    }
+    vertexMarkers.forEach((m) => map.removeLayer(m));
+    vertexMarkers = latlngs.map((ll, i) => {
+      const label = (currentArgs.labels && currentArgs.labels[i]) || ("point " + (i + 1));
+      return L.circleMarker(ll, { radius: 5, color: "#0ca30c", fillColor: "#0ca30c", fillOpacity: 1 })
+        .bindTooltip(label)
+        .addTo(map);
+    });
+    document.getElementById("readout").innerText =
+      "Origin (" + ((currentArgs.labels && currentArgs.labels[0]) || "PL1") + "): " +
+      lat.toFixed(6) + ", " + lon.toFixed(6);
+  }
+
+  function setFrameHeight() {
+    const height = document.documentElement.scrollHeight;
+    window.parent.postMessage({ isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: height }, "*");
+  }
+
+  function initMap(args) {
+    const mapDiv = document.getElementById("map");
+    mapDiv.style.height = (args.height || 480) + "px";
+
+    map = L.map("map").setView([args.center_lat, args.center_lon], args.zoom || 16);
+    const street = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors",
+    }).addTo(map);
+    const satellite = L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      { attribution: "Esri, Maxar, Earthstar Geographics" }
+    );
+    L.control.layers({ "Street": street, "Satellite": satellite }).addTo(map);
+
+    marker = L.marker([args.center_lat, args.center_lon], {
+      draggable: true,
+      title: "Drag me onto your plot's origin corner",
+    }).addTo(map);
+    marker.on("drag", (e) => {
+      const ll = e.target.getLatLng();
+      updateShape(ll.lat, ll.lng);
+    });
+
+    updateShape(args.center_lat, args.center_lon);
+    setTimeout(setFrameHeight, 50);
+  }
+
+  document.getElementById("confirmBtn").addEventListener("click", () => {
+    if (!marker) return;
+    const ll = marker.getLatLng();
+    window.parent.postMessage({
+      isStreamlitMessage: true,
+      type: "streamlit:setComponentValue",
+      value: { lat: ll.lat, lon: ll.lng },
+      dataType: "json",
+    }, "*");
+  });
+
+  window.addEventListener("message", (event) => {
+    if (!event.data || event.data.type !== "streamlit:render") return;
+    const args = event.data.args;
+
+    if (!map) {
+      currentArgs = args;
+      initMap(args);
+      return;
+    }
+
+    const prevArgs = currentArgs;
+    currentArgs = args;
+    const centerChanged = prevArgs.center_lat !== args.center_lat || prevArgs.center_lon !== args.center_lon;
+    const verticesChanged = JSON.stringify(prevArgs.vertices_en) !== JSON.stringify(args.vertices_en);
+
+    if (centerChanged) {
+      // A fresh area search - a just-found place is usually passed with a
+      // tighter zoom than the initial wide country view, so re-zoom too,
+      // not just pan.
+      map.setView([args.center_lat, args.center_lon], args.zoom || map.getZoom());
+      marker.setLatLng([args.center_lat, args.center_lon]);
+      updateShape(args.center_lat, args.center_lon);
+    } else if (verticesChanged) {
+      const ll = marker.getLatLng();
+      updateShape(ll.lat, ll.lng);
+    }
+    setFrameHeight();
+  });
+
+  window.parent.postMessage({ isStreamlitMessage: true, type: "streamlit:componentReady", apiVersion: 1 }, "*");
+</script>
+</body>
+</html>

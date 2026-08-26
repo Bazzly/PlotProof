@@ -15,10 +15,17 @@ full document upload; this page exposes the same math directly, two ways -
 Both feed the same traverse math (utils/traverse.py) and render the same
 result card - editing a table is the one shared interaction, whichever tab
 fills it first. Whenever a real-world origin is known (always true for an
-uploaded document; optional for manual entry), the boundary is also drawn
-on a real map (see _render_click_map()) - clicking anywhere on it reads
-off that point's coordinate directly, without needing to work out its
-bearing/distance from the origin by hand first.
+uploaded document that extracted cleanly; optional for manual entry), the
+boundary is also drawn on a real map (see _render_click_map()) - clicking
+anywhere on it reads off that point's coordinate directly, without needing
+to work out its bearing/distance from the origin by hand first.
+
+When an uploaded file's automatic extraction finds nothing at all, or no
+GPS origin was typed in manually, there's still a way to get a real-world
+position without knowing any coordinates: _render_georeference_picker()
+lets the user search their general area and then drag the (already
+survey-accurate) boundary shape onto the real map until it sits on their
+actual plot - see utils/shape_georeferencer.py for how that drag works.
 
 Deliberately excludes everything the main flow does that isn't about the
 diagonal itself: no shared-registry overlap check, no risk score, no PDF
@@ -37,7 +44,9 @@ from dotenv import load_dotenv
 from folium.plugins import Fullscreen
 from streamlit_folium import st_folium
 
-from utils import coordinates, crs_utils, file_handler, nav, rate_limit, theme, traverse, vision_extract
+from utils import coordinates, crs_utils, file_handler, nav, osm_service, rate_limit, theme, traverse, vision_extract
+from utils.map_traverse_sketch import map_traverse_sketch
+from utils.shape_georeferencer import shape_georeferencer
 
 load_dotenv()
 
@@ -77,6 +86,11 @@ _LEG_COLUMN_ORDER = ["beacon", "bearing_text", "distance_m"]
 _DEFAULT_MANUAL_ROWS = [
     {"beacon": f"PL{i + 1} → PL{i + 2 if i < 3 else 1}", "bearing_text": "", "distance_m": None} for i in range(4)
 ]
+
+# Same fallback center investment_analysis.py uses for its own "click on
+# map" location step - a Nigeria-wide default to zoom out from before a
+# search narrows it down.
+NIGERIA_CENTER = (9.0820, 8.6753)
 
 
 st.markdown(
@@ -164,6 +178,9 @@ def _render_legs_editor_and_result(rows: list, editor_key: str, origin_en: tuple
         st.info("A diagonal needs at least 4 boundary corners - a triangle has no non-adjacent vertex pair.")
         return
 
+    if origin_latlon is None:
+        origin_latlon = _render_georeference_picker(polygon_en, origin_en, labels, key_prefix=editor_key)
+
     points_latlon = None
     if origin_latlon:
         points_latlon, _, ll_diagonal = traverse.resolve_recomputed_points(origin_en, origin_latlon, legs, labels=labels)
@@ -193,6 +210,141 @@ def _render_legs_editor_and_result(rows: list, editor_key: str, origin_en: tuple
 
     if points_latlon and len(points_latlon) >= 3:
         _render_click_map(origin_en, origin_latlon, points_latlon, diagonal, labels, map_key=f"{editor_key}_map")
+
+
+def _render_map_sketch_picker(key_prefix: str) -> dict:
+    """Sketch-a-traverse fallback for when there's no bearing/distance to
+    type in at all - an illegible scan, or the corners are just easier to
+    place by eye against satellite imagery than to transcribe from a
+    document. Click corners directly on a real map; utils/
+    map_traverse_sketch.py works out each segment's bearing/distance live
+    as you go, in the same whole-circle-bearing convention as the rest of
+    this page.
+
+    Returns {"origin_latlon": (lat, lon), "rows": [...]} once the user
+    finishes (3+ points) - rows already in the shape the bearing/distance
+    data_editor elsewhere on this page expects, so the result can feed
+    straight into _render_legs_editor_and_result() same as a typed or
+    extracted table. Cached in session_state so it survives reruns from
+    unrelated widgets, same reasoning as _render_georeference_picker()."""
+    result_key = f"{key_prefix}_sketch_result"
+    already = st.session_state.get(result_key)
+    if already:
+        return already
+
+    with st.expander("Sketch it directly on a map instead", expanded=True):
+        st.caption(
+            "Click your plot's first corner on the map, then each next corner in order - the "
+            "bearing and distance between clicks are worked out for you and filled into the "
+            "table below automatically."
+        )
+        search_key = f"{key_prefix}_sketch_search"
+        center_key = f"{key_prefix}_sketch_center"
+        query = st.text_input("Search for your area", placeholder="Lekki Phase 1, Lagos", key=search_key)
+        if query and st.button("Search", key=f"{key_prefix}_sketch_search_btn"):
+            with st.spinner("Searching..."):
+                try:
+                    result = osm_service.geocode_place(query)
+                except osm_service.OSMServiceError as exc:
+                    result = None
+                    st.error(f"Couldn't search right now: {exc}")
+            if result:
+                st.session_state[center_key] = (result["lat"], result["lon"])
+            else:
+                st.warning("No match found - try a different search, or just pan/zoom the map below.")
+
+        # Wide country-level view until a real search narrows it down -
+        # same zoom convention pages/investment_analysis.py's own "click on
+        # map" step uses for this same NIGERIA_CENTER fallback. Zooming in
+        # tight on a rural default coordinate nobody actually searched for
+        # just shows sparsely-mapped nothing until the user zooms out anyway.
+        searched = center_key in st.session_state
+        center_lat, center_lon = st.session_state.get(center_key, NIGERIA_CENTER)
+        sketch = map_traverse_sketch(
+            center_lat=center_lat, center_lon=center_lon,
+            zoom=17 if searched else 6,
+            key=f"{key_prefix}_sketch_widget",
+        )
+        if sketch:
+            origin_latlon = (sketch["origin"]["lat"], sketch["origin"]["lon"])
+            leg_count = len(sketch["legs"])
+            rows = [
+                {
+                    "beacon": f"PL{i + 1} → PL{i + 2 if i + 2 <= leg_count else 1}",
+                    "bearing_text": traverse.format_bearing(leg["bearing"]),
+                    "distance_m": round(leg["distance_m"], 2),
+                }
+                for i, leg in enumerate(sketch["legs"])
+            ]
+            confirmed = {"origin_latlon": origin_latlon, "rows": rows}
+            st.session_state[result_key] = confirmed
+            st.success(f"Sketch captured - {leg_count} boundary leg(s). Review below before computing.")
+            return confirmed
+    return None
+
+
+def _render_georeference_picker(polygon_en: list, origin_en: tuple, labels: list, key_prefix: str) -> tuple:
+    """Fallback for when no real-world origin is known at all - extraction
+    found nothing on an uploaded file, and there's no GPS reading to type
+    in either. Lets the user search their general area, then drag the
+    boundary shape (already correct - just not yet positioned, since it
+    comes from the same bearing/distance survey math the rest of this page
+    trusts) onto the real map until it sits on their actual plot, using
+    satellite/street imagery as the reference instead of a coordinate they
+    may not have. See utils/shape_georeferencer.py for the drag mechanics.
+
+    Returns the confirmed (lat, lon) once set, else None - cached in
+    session_state so it survives reruns from unrelated widgets (typing in
+    the search box, editing the legs table again) without needing the
+    component to keep re-reporting the same value."""
+    confirmed_key = f"{key_prefix}_georef_confirmed"
+    already = st.session_state.get(confirmed_key)
+    if already:
+        return tuple(already)
+
+    with st.expander("Don't know the coordinates? Place your shape on a map instead"):
+        st.caption(
+            "Your boundary's shape and size are already correct, from the bearings/distances above - "
+            "search your general area, then drag the marker until the shape lines up with your actual "
+            "plot on the satellite image."
+        )
+        search_key = f"{key_prefix}_georef_search"
+        center_key = f"{key_prefix}_georef_center"
+        query = st.text_input("Search for your area", placeholder="Lekki Phase 1, Lagos", key=search_key)
+        if query and st.button("Search", key=f"{key_prefix}_georef_search_btn"):
+            with st.spinner("Searching..."):
+                try:
+                    result = osm_service.geocode_place(query)
+                except osm_service.OSMServiceError as exc:
+                    result = None
+                    st.error(f"Couldn't search right now: {exc}")
+            if result:
+                st.session_state[center_key] = (result["lat"], result["lon"])
+            else:
+                st.warning("No match found - try a different search, or just pan/zoom the map below.")
+
+        # Wide country-level view until a real search narrows it down - see
+        # _render_map_sketch_picker()'s identical comment for why.
+        searched = center_key in st.session_state
+        center_lat, center_lon = st.session_state.get(center_key, NIGERIA_CENTER)
+        # Relative to the origin (vertex 0), not the plan's own local-grid
+        # value - the dragged marker itself represents wherever the origin
+        # ends up in real life, so only the shape's geometry matters here.
+        vertices_relative = [(easting - origin_en[0], northing - origin_en[1]) for easting, northing in polygon_en]
+        result = shape_georeferencer(
+            vertices_en=vertices_relative,
+            labels=labels,
+            center_lat=center_lat,
+            center_lon=center_lon,
+            zoom=16 if searched else 6,
+            key=f"{key_prefix}_georef_widget",
+        )
+        if result:
+            confirmed = (result["lat"], result["lon"])
+            st.session_state[confirmed_key] = confirmed
+            st.success(f"Position set: {confirmed[0]:.6f}, {confirmed[1]:.6f}")
+            return confirmed
+    return None
 
 
 def _render_click_map(origin_en: tuple, origin_latlon: tuple, points_latlon: list, diagonal: dict, labels: list, map_key: str) -> None:
@@ -315,6 +467,17 @@ with tab_upload:
             with st.spinner("Reading your file..."):
                 saved_path = file_handler.save_uploaded_file(uploaded_file)
                 file_type = os.path.splitext(uploaded_file.name)[1].lstrip(".").lower()
+                # Kept beyond this block (unlike the extraction result
+                # below) so the manual-entry fallback further down can
+                # still show the file for reference on later reruns, e.g.
+                # while the user types into the legs table or drags the
+                # georeference picker.
+                st.session_state["_diag_upload_saved_path"] = saved_path
+                st.session_state["_diag_upload_file_type"] = file_type
+                # A new file invalidates any earlier fallback edits/
+                # georeferencing done against the previous one.
+                st.session_state.pop("_diag_upload_manual_editor", None)
+                st.session_state.pop("_diag_upload_manual_editor_georef_confirmed", None)
 
                 use_vision = (
                     file_type in ("png", "jpg", "jpeg")
@@ -366,6 +529,7 @@ with tab_upload:
                         )
 
     legs_info = st.session_state.get("_diag_upload_legs_info")
+    saved_path = st.session_state.get("_diag_upload_saved_path")
     if legs_info and legs_info.get("rows"):
         st.markdown("**Boundary legs (auto-read - review before trusting)**")
         _render_legs_editor_and_result(
@@ -374,3 +538,34 @@ with tab_upload:
             origin_en=legs_info["origin_en"],
             origin_latlon=legs_info["origin_latlon"],
         )
+    elif uploaded_file is not None and saved_path:
+        # Extraction either failed outright or found no bearing/distance
+        # traverse at all - rather than dead-ending, offer two fallbacks:
+        # sketch the boundary by clicking corners on a real map (gets both
+        # the shape AND its real-world position in one step, no numbers
+        # needed at all), or type values by hand off the file shown below
+        # (which in turn offers the drag-to-georeference picker once a
+        # shape exists, since typing alone gives no real-world position).
+        file_type = st.session_state.get("_diag_upload_file_type")
+        st.caption("Automatic reading didn't find a bearing/distance traverse in this file.")
+
+        sketch = _render_map_sketch_picker(key_prefix="_diag_upload_manual_editor")
+        if sketch:
+            st.markdown("**Boundary legs (from your sketch - review before trusting)**")
+            _render_legs_editor_and_result(
+                sketch["rows"],
+                editor_key="_diag_upload_manual_editor",
+                origin_en=(0.0, 0.0),
+                origin_latlon=sketch["origin_latlon"],
+            )
+        else:
+            st.markdown("**Or, enter the boundary manually**")
+            st.caption("Use your uploaded file as reference below, and type the values in by hand.")
+            if file_type in ("png", "jpg", "jpeg") and os.path.isfile(saved_path):
+                st.image(saved_path, caption="Your uploaded file", use_container_width=True)
+            _render_legs_editor_and_result(
+                _DEFAULT_MANUAL_ROWS,
+                editor_key="_diag_upload_manual_editor",
+                origin_en=(0.0, 0.0),
+                origin_latlon=None,
+            )
