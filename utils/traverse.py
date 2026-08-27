@@ -200,6 +200,8 @@ def format_bearing(deg: float) -> str:
     if minutes == 60:
         whole += 1
         minutes = 0
+    if whole >= 360:
+        whole -= 360
     return f"{whole}°{minutes:02d}'"
 
 

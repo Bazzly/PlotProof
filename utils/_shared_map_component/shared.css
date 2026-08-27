@@ -1,0 +1,13 @@
+/* Shared styles for PlotProof's static Streamlit map components - see
+   shared.js's own header comment for why this file exists and how it
+   gets into each component's frontend/ directory. */
+
+.pp-seg-label {
+  background: #fbf8f1;
+  border: 1px solid #d4cdbf;
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 11px;
+  color: #25170c;
+  white-space: nowrap;
+}

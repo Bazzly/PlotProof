@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="shared.css" />
 <style>
   html, body { margin: 0; padding: 0; font-family: 'Work Sans', -apple-system, BlinkMacSystemFont, sans-serif; background: #f9f5ec; }
   #wrap { padding: 8px; box-sizing: border-box; }
@@ -15,10 +16,6 @@
   }
   #confirmBtn:hover { background: #0d3f21; }
   #hint { font-size: 12px; color: #845a0f; margin-top: 6px; }
-  .pp-seg-label {
-    background: #fbf8f1; border: 1px solid #d4cdbf; border-radius: 6px;
-    padding: 1px 6px; font-size: 11px; color: #25170c; white-space: nowrap;
-  }
 </style>
 </head>
 <body>
@@ -31,8 +28,10 @@
   <div id="hint">Search above to jump to your area. Drag the blue origin marker to move the whole shape at once; drag any green corner on its own to fine-tune just that point against the satellite image.</div>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="shared.js"></script>
 <script>
   const METERS_PER_DEG_LAT = 111320.0;
+  const { bearingDistance, formatBearing, segLabelIcon } = PPMapComponent;
 
   let map = null;
   let polygon = null;
@@ -46,44 +45,32 @@
     return [originLat + northing / METERS_PER_DEG_LAT, originLon + easting / metersPerDegLon];
   }
 
-  // Real bearing/distance between two CURRENT lat/lon vertices - same
-  // flat-earth approximation and whole-circle-bearing convention as
-  // utils/map_traverse_sketch.py's own bearingDistance(), so a shape's
-  // edge labels read the same way whichever tool produced or is now
-  // displaying it.
-  function bearingDistance(fromLL, toLL) {
-    const metersPerDegLon = METERS_PER_DEG_LAT * Math.cos(fromLL[0] * Math.PI / 180);
-    const dNorthing = (toLL[0] - fromLL[0]) * METERS_PER_DEG_LAT;
-    const dEasting = (toLL[1] - fromLL[1]) * metersPerDegLon;
-    const distance = Math.sqrt(dNorthing * dNorthing + dEasting * dEasting);
-    let bearing = Math.atan2(dEasting, dNorthing) * 180 / Math.PI;
-    bearing = (bearing + 360) % 360;
-    return { bearing, distance };
-  }
-
-  function formatBearing(deg) {
-    let whole = Math.floor(deg);
-    let minutes = Math.round((deg - whole) * 60);
-    if (minutes === 60) { whole += 1; minutes = 0; }
-    return whole + "°" + String(minutes).padStart(2, "0") + "'";
-  }
-
-  function segLabelIcon(text) {
-    return L.divIcon({ className: "", html: '<div class="pp-seg-label">' + text + "</div>", iconSize: null });
-  }
-
   function redrawSegmentLabels() {
-    segLabels.forEach((m) => map.removeLayer(m));
-    segLabels = [];
+    // Updates existing label markers in place (position + text) rather
+    // than destroying and recreating all of them - this runs on every
+    // `drag` tick (many times/sec while dragging a corner), and rebuilding
+    // N DOM markers per tick was visibly laggy for plots with more than a
+    // few corners. Vertex COUNT only ever changes via resetShape() (a
+    // fresh area search, or the underlying legs changing), never mid-drag,
+    // so the add/remove-extras path below is the rare case, not the norm.
     const n = currentLatLngs.length;
     for (let i = 0; i < n; i++) {
       const from = currentLatLngs[i];
       const to = currentLatLngs[(i + 1) % n];
       const { bearing, distance } = bearingDistance(from, to);
       const mid = [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2];
-      segLabels.push(
-        L.marker(mid, { icon: segLabelIcon(formatBearing(bearing) + " · " + distance.toFixed(2) + "m"), interactive: false }).addTo(map)
-      );
+      const text = formatBearing(bearing) + " · " + distance.toFixed(2) + "m";
+      if (segLabels[i]) {
+        segLabels[i].setLatLng(mid);
+        const el = segLabels[i].getElement();
+        const labelDiv = el && el.querySelector(".pp-seg-label");
+        if (labelDiv) labelDiv.textContent = text;
+      } else {
+        segLabels.push(L.marker(mid, { icon: segLabelIcon(text), interactive: false }).addTo(map));
+      }
+    }
+    while (segLabels.length > n) {
+      map.removeLayer(segLabels.pop());
     }
   }
 
@@ -159,21 +146,6 @@
     });
   }
 
-  function setFrameHeight() {
-    const height = document.documentElement.scrollHeight;
-    window.parent.postMessage({ isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: height }, "*");
-  }
-
-  // A one-shot setFrameHeight() right after init (below) reads a stale,
-  // often-zero height if this component is rendered inside something that
-  // starts hidden (e.g. a collapsed st.expander - exactly
-  // _render_georeference_picker()'s own default) and only becomes visible
-  // later - nothing would ever correct it otherwise. A ResizeObserver on
-  // <body> catches the moment a hidden ancestor's collapse actually
-  // changes this element's real size (expander opening, markers/labels
-  // added or removed, map height itself changing) and reports it fresh.
-  new ResizeObserver(() => setFrameHeight()).observe(document.body);
-
   function initMap(args) {
     const mapDiv = document.getElementById("map");
     mapDiv.style.height = (args.height || 480) + "px";
@@ -189,17 +161,12 @@
     L.control.layers({ "Street": street, "Satellite": satellite }).addTo(map);
 
     resetShape(args.center_lat, args.center_lon);
-    setTimeout(setFrameHeight, 50);
+    setTimeout(PPMapComponent.setFrameHeight, 50);
   }
 
   document.getElementById("confirmBtn").addEventListener("click", () => {
     if (!currentLatLngs) return;
-    window.parent.postMessage({
-      isStreamlitMessage: true,
-      type: "streamlit:setComponentValue",
-      value: { vertices: currentLatLngs.map(([lat, lon]) => ({ lat: lat, lon: lon })) },
-      dataType: "json",
-    }, "*");
+    PPMapComponent.setValue({ vertices: currentLatLngs.map(([lat, lon]) => ({ lat: lat, lon: lon })) });
   });
 
   window.addEventListener("message", (event) => {
@@ -233,10 +200,11 @@
       const originLL = currentLatLngs[0];
       resetShape(originLL[0], originLL[1]);
     }
-    setFrameHeight();
+    PPMapComponent.setFrameHeight();
   });
 
-  window.parent.postMessage({ isStreamlitMessage: true, type: "streamlit:componentReady", apiVersion: 1 }, "*");
+  PPMapComponent.observeHeight();
+  PPMapComponent.sendReady();
 </script>
 </body>
 </html>

@@ -120,6 +120,20 @@ st.markdown(
 )
 
 
+def _trace_widget_keys(key_prefix: str) -> dict:
+    """The session_state key names _render_image_trace_picker() creates
+    its scale/paper-size widgets under, keyed by short names - the one
+    place both that function (writing) and the "Sketch it on a real map"
+    branch (reading a completed trace's scale, without re-rendering the
+    Trace tab's own widgets - see that branch's own comment for why) agree
+    on these names, so a future rename can't silently desync the two."""
+    return {
+        "scale": f"{key_prefix}_trace_scale",
+        "paper_w": f"{key_prefix}_trace_paper_w",
+        "paper_h": f"{key_prefix}_trace_paper_h",
+    }
+
+
 def _get_preview_bytes(saved_path: str, file_type: str) -> tuple:
     """A displayable reference image for the upload-failure fallbacks
     below (both st.image() and the image-trace component need raw bytes,
@@ -376,19 +390,20 @@ def _render_image_trace_picker(image_bytes: bytes, mime_type: str, origin_en: tu
             "order, clockwise."
         )
 
+        widget_keys = _trace_widget_keys(key_prefix)
         col_scale, col_w, col_h = st.columns(3)
         scale_text = col_scale.text_input(
-            "Plan scale (as printed)", placeholder="1:1000", key=f"{key_prefix}_trace_scale",
+            "Plan scale (as printed)", placeholder="1:1000", key=widget_keys["scale"],
             help="Most Nigerian survey plans print this, e.g. \"SCALE:-1:1000\". Enter it for real "
             "distances; leave blank for a rough, generically-sized shape instead.",
         )
         paper_width_mm = col_w.number_input(
-            "Paper width (mm)", value=210.0, min_value=1.0, format="%.0f", key=f"{key_prefix}_trace_paper_w",
+            "Paper width (mm)", value=210.0, min_value=1.0, format="%.0f", key=widget_keys["paper_w"],
             help="Assumes the image frames one full page this size, portrait A4 by default - adjust "
             "if your document is a different size, or landscape (swap width/height).",
         )
         paper_height_mm = col_h.number_input(
-            "Paper height (mm)", value=297.0, min_value=1.0, format="%.0f", key=f"{key_prefix}_trace_paper_h",
+            "Paper height (mm)", value=297.0, min_value=1.0, format="%.0f", key=widget_keys["paper_h"],
         )
         scale_denominator = _parse_scale_denominator(scale_text)
         if scale_text.strip() and not scale_denominator:
@@ -429,51 +444,63 @@ def _render_map_sketch_picker(key_prefix: str) -> dict:
     data_editor elsewhere on this page expects, so the result can feed
     straight into _render_legs_editor_and_result() same as a typed or
     extracted table. Cached in session_state so it survives reruns from
-    unrelated widgets, same reasoning as _render_georeference_picker()."""
+    unrelated widgets, same reasoning as _render_georeference_picker() -
+    but unlike that function, still renders UI (a summary + "Start over")
+    once cached rather than returning silently, since there'd otherwise be
+    no way to redo a sketch clicked in the wrong places."""
     result_key = f"{key_prefix}_sketch_result"
-    already = st.session_state.get(result_key)
-    if already:
-        return already
+    confirmed = st.session_state.get(result_key)
 
     with st.expander("Sketch it directly on a map instead", expanded=True):
-        st.caption(
-            "Click your plot's first corner on the map, then each next corner in order - the "
-            "bearing and distance between clicks are worked out for you and filled into the "
-            "table below automatically."
-        )
-        search_key = f"{key_prefix}_sketch_search"
-        center_key = f"{key_prefix}_sketch_center"
-        query = st.text_input("Search for your area", placeholder="Lekki Phase 1, Lagos", key=search_key)
-        if query and st.button("Search", key=f"{key_prefix}_sketch_search_btn"):
-            with st.spinner("Searching..."):
-                try:
-                    result = osm_service.geocode_place(query)
-                except osm_service.OSMServiceError as exc:
-                    result = None
-                    st.error(f"Couldn't search right now: {exc}")
-            if result:
-                st.session_state[center_key] = (result["lat"], result["lon"])
-            else:
-                st.warning("No match found - try a different search, or just pan/zoom the map below.")
+        if not confirmed:
+            st.caption(
+                "Click your plot's first corner on the map, then each next corner in order - the "
+                "bearing and distance between clicks are worked out for you and filled into the "
+                "table below automatically."
+            )
+            search_key = f"{key_prefix}_sketch_search"
+            center_key = f"{key_prefix}_sketch_center"
+            query = st.text_input("Search for your area", placeholder="Lekki Phase 1, Lagos", key=search_key)
+            if query and st.button("Search", key=f"{key_prefix}_sketch_search_btn"):
+                with st.spinner("Searching..."):
+                    try:
+                        result = osm_service.geocode_place(query)
+                    except osm_service.OSMServiceError as exc:
+                        result = None
+                        st.error(f"Couldn't search right now: {exc}")
+                if result:
+                    st.session_state[center_key] = (result["lat"], result["lon"])
+                else:
+                    st.warning("No match found - try a different search, or just pan/zoom the map below.")
 
-        # Wide country-level view until a real search narrows it down -
-        # same zoom convention pages/investment_analysis.py's own "click on
-        # map" step uses for this same NIGERIA_CENTER fallback. Zooming in
-        # tight on a rural default coordinate nobody actually searched for
-        # just shows sparsely-mapped nothing until the user zooms out anyway.
-        searched = center_key in st.session_state
-        center_lat, center_lon = st.session_state.get(center_key, NIGERIA_CENTER)
-        sketch = map_traverse_sketch(
-            center_lat=center_lat, center_lon=center_lon,
-            zoom=17 if searched else 6,
-            key=f"{key_prefix}_sketch_widget",
-        )
-        if sketch:
-            origin_latlon = (sketch["origin"]["lat"], sketch["origin"]["lon"])
-            legs = [(leg["bearing"], leg["distance_m"]) for leg in sketch["legs"]]
-            confirmed = {"origin_latlon": origin_latlon, "rows": _rows_from_legs(legs)}
-            st.session_state[result_key] = confirmed
-            st.success(f"Sketch captured - {len(legs)} boundary leg(s). Review below before computing.")
+            # Wide country-level view until a real search narrows it down -
+            # same zoom convention pages/investment_analysis.py's own "click
+            # on map" step uses for this same NIGERIA_CENTER fallback.
+            # Zooming in tight on a rural default coordinate nobody actually
+            # searched for just shows sparsely-mapped nothing until the user
+            # zooms out anyway.
+            searched = center_key in st.session_state
+            center_lat, center_lon = st.session_state.get(center_key, NIGERIA_CENTER)
+            sketch = map_traverse_sketch(
+                center_lat=center_lat, center_lon=center_lon,
+                zoom=17 if searched else 6,
+                key=f"{key_prefix}_sketch_widget",
+            )
+            if sketch:
+                origin_latlon = (sketch["origin"]["lat"], sketch["origin"]["lon"])
+                legs = [(leg["bearing"], leg["distance_m"]) for leg in sketch["legs"]]
+                confirmed = {"origin_latlon": origin_latlon, "rows": _rows_from_legs(legs)}
+                st.session_state[result_key] = confirmed
+
+        if confirmed:
+            # Reached either from a just-finished sketch above or an
+            # already-cached one from a prior run - same summary + reset
+            # affordance either way, so "Start over" is never one rerun
+            # behind the sketch actually being captured.
+            st.success(f"Sketch captured - {len(confirmed['rows'])} boundary leg(s). Review the table below.")
+            if st.button("Start over", key=f"{key_prefix}_sketch_restart_btn"):
+                st.session_state.pop(result_key, None)
+                st.rerun()
             return confirmed
     return None
 
@@ -497,13 +524,26 @@ def _render_georeference_picker(polygon_en: list, origin_en: tuple, labels: list
     reusing the pre-adjustment legs it started with. Cached in
     session_state so it survives reruns from unrelated widgets (typing in
     the search box, editing the legs table again) without needing the
-    component to keep re-reporting the same value."""
+    component to keep re-reporting the same value - but invalidated if the
+    INPUT shape (polygon_en) has since changed, e.g. the user edited the
+    trace's scale/paper-size after already confirming a position. This
+    needs two things, not just a session_state check: a Streamlit custom
+    component keeps returning its LAST-SET value across reruns regardless
+    of new props, so simply clearing our own cache isn't enough - on the
+    very next rerun `shape_georeferencer()` would hand back the same stale
+    confirmation and we'd immediately re-cache it. The widget's `key` is
+    salted with a fingerprint of polygon_en below so a shape change makes
+    Streamlit treat it as a brand new, never-confirmed component instance."""
     confirmed_key = f"{key_prefix}_georef_confirmed"
+    shape_fingerprint = "_".join(f"{e:.4f}:{n:.4f}" for e, n in polygon_en)
     already = st.session_state.get(confirmed_key)
+    if already and already.get("_shape_fingerprint") != shape_fingerprint:
+        already = None
+        st.session_state.pop(confirmed_key, None)
     if already:
         return already
 
-    with st.expander("Don't know the coordinates? Place your shape on a map instead", expanded=True):
+    with st.expander("Don't know the coordinates? Place your shape on a map instead"):
         st.caption(
             "Your boundary's shape and size are already correct, from the bearings/distances above - "
             "search your general area, then drag the marker until the shape lines up with your actual "
@@ -538,7 +578,11 @@ def _render_georeference_picker(polygon_en: list, origin_en: tuple, labels: list
             center_lat=center_lat,
             center_lon=center_lon,
             zoom=16 if searched else 6,
-            key=f"{key_prefix}_georef_widget",
+            # Salted with the shape itself (see this function's docstring)
+            # so a changed shape is a genuinely new component instance -
+            # otherwise Streamlit would keep handing back this widget's
+            # last-confirmed value from before the shape changed.
+            key=f"{key_prefix}_georef_widget_{shape_fingerprint}",
         )
         if result and result.get("vertices"):
             vertices_latlon = [(v["lat"], v["lon"]) for v in result["vertices"]]
@@ -546,7 +590,11 @@ def _render_georeference_picker(polygon_en: list, origin_en: tuple, labels: list
             adjusted_polygon_en = [
                 traverse.latlon_to_local_en(origin_en, origin_latlon, lat, lon) for lat, lon in vertices_latlon
             ]
-            confirmed = {"origin_latlon": origin_latlon, "polygon_en": adjusted_polygon_en}
+            confirmed = {
+                "origin_latlon": origin_latlon,
+                "polygon_en": adjusted_polygon_en,
+                "_shape_fingerprint": shape_fingerprint,
+            }
             st.session_state[confirmed_key] = confirmed
             st.success(f"Position set: {origin_latlon[0]:.6f}, {origin_latlon[1]:.6f}")
             return confirmed
@@ -681,7 +729,12 @@ with tab_upload:
                 st.session_state["_diag_upload_saved_path"] = saved_path
                 st.session_state["_diag_upload_file_type"] = file_type
                 # A new file invalidates any earlier fallback edits/
-                # georeferencing done against the previous one.
+                # georeferencing done against the previous one. This is the
+                # only place that clears _sketch_result/_trace_points - the
+                # method-switch handling further down deliberately doesn't
+                # (see its own comment), so if this block is ever trimmed,
+                # stale sketch/trace data from a previous file could leak
+                # into a newly-uploaded one.
                 st.session_state.pop("_diag_upload_manual_editor", None)
                 st.session_state.pop("_diag_upload_manual_editor_georef_confirmed", None)
                 st.session_state.pop("_diag_upload_manual_editor_sketch_result", None)
@@ -794,8 +847,6 @@ with tab_upload:
             st.session_state.pop("_diag_upload_manual_editor", None)
             st.session_state.pop("_diag_upload_manual_editor_georef_confirmed", None)
 
-        trace_points = st.session_state.get("_diag_upload_manual_editor_trace_points")
-
         if method == "Trace it on the image/PDF":
             if preview_bytes:
                 trace = _render_image_trace_picker(
@@ -813,40 +864,58 @@ with tab_upload:
                 st.warning("Couldn't generate a preview of this file to trace on - try Sketch or Type instead.")
 
         elif method == "Sketch it on a real map":
+            # A completed trace (from the Trace tab, above) takes priority
+            # over the live click-to-build map - see the outer comment for
+            # why. Both paths converge on one shared render call below
+            # instead of two near-identical ones, so there's a single place
+            # that can drift between "trace transferred" and "live sketch."
+            trace_points = st.session_state.get("_diag_upload_manual_editor_trace_points")
+            rows, used_origin_en, origin_latlon, heading = None, fallback_origin_en, None, None
+
             if trace_points:
-                # A trace already exists - transfer it here instead of
-                # starting a fresh click-to-build sketch from scratch. Reads
-                # the scale/paper-size fields straight from session_state
-                # rather than re-rendering them (they're the Trace tab's
-                # own widgets, and Streamlit keeps their value by key
-                # regardless of which tab is currently shown).
                 st.caption(
                     "Using the shape you traced from the document - drag it into position below "
                     "(and fine-tune any corner) against the satellite image."
                 )
-                scale_denominator = _parse_scale_denominator(
-                    st.session_state.get("_diag_upload_manual_editor_trace_scale", "")
-                )
-                paper_width_mm = st.session_state.get("_diag_upload_manual_editor_trace_paper_w", 210.0)
-                paper_height_mm = st.session_state.get("_diag_upload_manual_editor_trace_paper_h", 297.0)
+                if st.button("Sketch from scratch instead", key="_diag_upload_sketch_from_scratch_btn"):
+                    # trace_points is the same underlying data the Trace tab
+                    # itself displays (one shared key, not a copy) - clearing
+                    # it here is exactly as destructive as that tab's own
+                    # "Retrace from scratch", just reachable from this tab
+                    # too instead of only being escapable by switching away.
+                    st.session_state.pop("_diag_upload_manual_editor_trace_points", None)
+                    st.session_state.pop("_diag_upload_manual_editor", None)
+                    st.session_state.pop("_diag_upload_manual_editor_georef_confirmed", None)
+                    st.rerun()
+                # Reads the Trace tab's own scale/paper-size widgets straight
+                # from session_state rather than re-rendering them (they're
+                # not shown on this tab; Streamlit keeps a widget's value by
+                # key regardless of which tab last rendered it) - the same
+                # key names _render_image_trace_picker() writes under, via
+                # the one shared helper, so a rename there can't silently
+                # desync this read.
+                widget_keys = _trace_widget_keys("_diag_upload_manual_editor")
+                scale_denominator = _parse_scale_denominator(st.session_state.get(widget_keys["scale"], ""))
+                paper_width_mm = st.session_state.get(widget_keys["paper_w"], 210.0)
+                paper_height_mm = st.session_state.get(widget_keys["paper_h"], 297.0)
                 rows = _compute_trace_rows(trace_points, fallback_origin_en, scale_denominator, paper_width_mm, paper_height_mm)
-                st.markdown("**Boundary legs (from your trace - review before trusting)**")
-                _render_legs_editor_and_result(
-                    rows,
-                    editor_key="_diag_upload_manual_editor",
-                    origin_en=fallback_origin_en,
-                    origin_latlon=None,
-                )
+                heading = "**Boundary legs (from your trace - review before trusting)**"
             else:
                 sketch = _render_map_sketch_picker(key_prefix="_diag_upload_manual_editor")
                 if sketch:
-                    st.markdown("**Boundary legs (from your sketch - review before trusting)**")
-                    _render_legs_editor_and_result(
-                        sketch["rows"],
-                        editor_key="_diag_upload_manual_editor",
-                        origin_en=(0.0, 0.0),
-                        origin_latlon=sketch["origin_latlon"],
-                    )
+                    rows = sketch["rows"]
+                    origin_latlon = sketch["origin_latlon"]
+                    used_origin_en = (0.0, 0.0)
+                    heading = "**Boundary legs (from your sketch - review before trusting)**"
+
+            if rows:
+                st.markdown(heading)
+                _render_legs_editor_and_result(
+                    rows,
+                    editor_key="_diag_upload_manual_editor",
+                    origin_en=used_origin_en,
+                    origin_latlon=origin_latlon,
+                )
 
         else:
             st.caption("Use your uploaded file as reference below, and type the values in by hand.")

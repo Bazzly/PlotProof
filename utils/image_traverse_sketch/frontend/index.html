@@ -42,6 +42,7 @@
   </div>
   <div id="hint">Click each corner in order, clockwise, starting with the first (origin) corner. This only needs to capture the rough shape - you'll fine-tune it against a real satellite map next.</div>
 </div>
+<script src="shared.js"></script>
 <script>
   const SVG_NS = "http://www.w3.org/2000/svg";
   let points = [];   // [{x, y}, ...] fractions (0-1) of the rendered image box
@@ -110,25 +111,13 @@
     });
   }
 
-  function setFrameHeight() {
-    const height = document.documentElement.scrollHeight;
-    window.parent.postMessage({ isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: height }, "*");
-  }
-
-  // Catches a hidden-ancestor-becomes-visible case (e.g. this component
-  // ending up inside a collapsed st.expander) that a one-shot
-  // setFrameHeight() right after load would read as zero and never
-  // correct - see utils/shape_georeferencer/frontend/index.html's
-  // identical comment for the full reasoning.
-  new ResizeObserver(() => setFrameHeight()).observe(document.body);
-
   function sizeOverlay() {
     const rect = imgWrap.getBoundingClientRect();
     overlay.setAttribute("width", rect.width);
     overlay.setAttribute("height", rect.height);
     overlay.setAttribute("viewBox", "0 0 " + rect.width + " " + rect.height);
     redraw();
-    setTimeout(setFrameHeight, 50);
+    setTimeout(PPMapComponent.setFrameHeight, 50);
   }
 
   imgWrap.addEventListener("click", (e) => {
@@ -167,12 +156,7 @@
 
   document.getElementById("finishBtn").addEventListener("click", () => {
     if (points.length < 3) return;
-    window.parent.postMessage({
-      isStreamlitMessage: true,
-      type: "streamlit:setComponentValue",
-      value: { points: points },
-      dataType: "json",
-    }, "*");
+    PPMapComponent.setValue({ points: points });
   });
 
   window.addEventListener("resize", sizeOverlay);
@@ -190,10 +174,11 @@
       });
       img.src = args.image_data_uri;
     }
-    setFrameHeight();
+    PPMapComponent.setFrameHeight();
   });
 
-  window.parent.postMessage({ isStreamlitMessage: true, type: "streamlit:componentReady", apiVersion: 1 }, "*");
+  PPMapComponent.observeHeight();
+  PPMapComponent.sendReady();
 </script>
 </body>
 </html>

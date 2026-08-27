@@ -15,3 +15,9 @@ data/property_requests/
 .streamlit/secrets.toml
 ADMIN_ACCESS.md
 /product
+
+# Copied into each map component's frontend/ directory at import time by
+# utils/_shared_map_component's sync_into() - utils/_shared_map_component/
+# itself (the real source) is tracked normally.
+utils/*/frontend/shared.js
+utils/*/frontend/shared.css

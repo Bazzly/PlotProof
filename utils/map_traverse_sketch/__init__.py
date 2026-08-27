@@ -25,7 +25,10 @@ from typing import Optional
 
 import streamlit.components.v1 as components
 
+from utils._shared_map_component import sync_into
+
 _FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "frontend")
+sync_into(_FRONTEND_DIR)
 _component_func = components.declare_component("map_traverse_sketch", path=_FRONTEND_DIR)
 
 
